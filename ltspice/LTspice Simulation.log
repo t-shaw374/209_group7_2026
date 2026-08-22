@@ -1,6 +1,6 @@
 LTspice 26.0.2 for Windows
 Circuit: C:\Users\thoma\University\Compsys209\209_group7_2026\ltspice\LTspice Simulation.net
-Start Time: Fri Aug 21 20:50:57 2026
+Start Time: Sat Aug 22 16:18:16 2026
 solver = Normal
 Maximum thread count: 32
 tnom = 27
@@ -11,7 +11,7 @@ Direct Newton iteration failed to find operating point.
 Starting Gmin stepping
 Gmin stepping succeeded in finding the operating point.
 
-Total elapsed time: 2.171 seconds.
+Total elapsed time: 4.825 seconds.
 
 Files loaded:
 C:\Users\thoma\University\Compsys209\209_group7_2026\ltspice\LTspice Simulation.net
@@ -19,12 +19,12 @@ C:\Users\thoma\AppData\Local\LTspice\lib\cmp\standard.dio
 C:\Users\thoma\University\Compsys209\209_group7_2026\ltspice\LM324.lib
 C:\Users\thoma\AppData\Local\LTspice\lib\sub\LT1083.lib
 
-t_vis: V(vis)=0  AT 0.0100419184096
-t_visf: V(visf)=2.1  AT 0.00905236303077
-t_output: V(currpass0)=2.1  AT 0.0101609301834
-t_vis_ms: t_vis*1000=10.0419184096
-t_visf_ms: t_visf*1000=9.05236303077
-t_output_ms: t_output*1000=10.1609301834
-delay_filter_ms: (t_visf-t_vis)*1000=-0.989555378817
-delay_comparator_ms: (t_output-t_visf)*1000=1.10856715265
-delay_total_ms: (t_output-t_vis)*1000=0.119011773831
+t_vis: V(vis)=0  AT 0.0101979416301
+t_visf: V(visf)=2.1  AT 0.00920178381639
+t_output: V(currpass0)=2.1  AT 0.0102432984452
+t_vis_ms: t_vis*1000=10.1979416301
+t_visf_ms: t_visf*1000=9.20178381639
+t_output_ms: t_output*1000=10.2432984452
+delay_filter_ms: (t_visf-t_vis)*1000=-0.996157813732
+delay_comparator_ms: (t_output-t_visf)*1000=1.04151462878
+delay_total_ms: (t_output-t_vis)*1000=0.0453568150431
