@@ -1,0 +1,35 @@
+name: Create Wiki with Template
+
+permissions:
+  contents: write
+
+on:
+  gollum
+    
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+jobs:
+
+  create-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: Andrew-Chen-Wang/github-wiki-action@v4
+        with:
+          path: .github/WIKI_TEMPLATE
+          commit-message: "docs(wiki): create wiki from template"
+          
+  disable-workflow:
+    needs: create-wiki
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disable this workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh workflow disable -R "${{ github.repository }}" "${{ github.workflow }}"
