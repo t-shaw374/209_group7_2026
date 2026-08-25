@@ -3,40 +3,20 @@
  * Author : taye752
  */
 #define F_CPU 2000000UL
-#include <avr/io.h>
-#include <util/delay.h>
 
-#define UBRR_VALUE 12            // 2,000,000 / (16 * 9600) - 1 = 12  -> 9600 baud
+
+#include <util/delay.h>
+#include "uart_header.h"
+
+#define BAUD 9600
+#define UBRR_VALUE ((F_CPU / ((uint32_t)16 * BAUD)) - 1) // 2,000,000 / (16 * 9600) - 1 = 12  -> 9600 baud
+#define SEND_DELAY 1000 //ms
 
 #define RMSVoltage 14.5          // XX.X
 #define PeakCurrent 125          // XXX
 #define Power 1.60               // X.XX
 
-void usart_init(uint16_t ubrr)
-{
-    UBRR0H = (uint8_t)(ubrr >> 8);
-    UBRR0L = (uint8_t)(ubrr);
-    UCSR0B = (1 << TXEN0);                       // transmitter on
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);      // 8-N-1
-}
 
-void usart_transmit(uint8_t data)
-{
-    while (!(UCSR0A & (1 << UDRE0)))
-    {
-        ;
-    }
-    UDR0 = data;
-}
-
-void usart_print_string(const char *s)
-{
-    while (*s)
-    {
-        usart_transmit((uint8_t)*s);
-        s++;
-    }
-}
 
 int main(void)
 {
@@ -90,6 +70,6 @@ int main(void)
         usart_transmit('\r');   // blank line between blocks (matches brief)
         usart_transmit('\n');
 
-        _delay_ms(1000);
+        _delay_ms(SEND_DELAY);
     }
 }
