@@ -33,11 +33,13 @@ uint8_t i2c_start(uint8_t address_with_rw)
 }
 
 
-void i2c_write(uint8_t data)
+uint8_t i2c_write(uint8_t data)
 {
 	TWDR = data; // Load data to be sent
 	TWCR = (1 << TWINT) | (1 << TWEN); // start transmission
 	while (!(TWCR & (1 << TWINT))); // Waits until finished
+	
+	return (TWSR & 0xF8);
 }
 
 void i2c_stop(void)

@@ -16,8 +16,8 @@
 // e.g. F_CPU=16000000UL
 
 void i2c_init(void);
-void i2c_start(uint8_t address_with_rw);
-void i2c_write(uint8_t data);
+uint8_t i2c_start(uint8_t address_with_rw);
+uint8_t i2c_write(uint8_t data);
 void i2c_stop(void);
 
 
