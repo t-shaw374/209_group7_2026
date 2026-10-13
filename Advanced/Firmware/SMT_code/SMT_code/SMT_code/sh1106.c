@@ -1,10 +1,9 @@
 /*
  * sh1106.c
  *
- * Created: 28/09/2026 2:39:13 pm
- *  Author: thoma
+ * Created: 14/10/2026 12:27:26 pm
+ *  Author: tsha374
  */ 
-
 #include "common.h"
 #include "sh1106.h"
 #include "i2c.h"

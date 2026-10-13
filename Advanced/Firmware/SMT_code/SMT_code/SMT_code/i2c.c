@@ -1,12 +1,11 @@
 /*
- * I2c.c
+ * i2c.c
  *
- * Created: 28/09/2026 1:39:56 pm
- *  Author: thoma
+ * Created: 14/10/2026 12:27:02 pm
+ *  Author: tsha374
  */ 
-
 #include "common.h"
-#include "I2c.h"
+#include "i2c.h"
 #include <avr/io.h>
 #include <stdint.h>
 

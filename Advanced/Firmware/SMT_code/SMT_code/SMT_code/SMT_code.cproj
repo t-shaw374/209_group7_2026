@@ -12,9 +12,9 @@
     <OutputFileName>$(MSBuildProjectName)</OutputFileName>
     <OutputFileExtension>.elf</OutputFileExtension>
     <OutputDirectory>$(MSBuildProjectDirectory)\$(Configuration)</OutputDirectory>
-    <AssemblyName>I2C screen code</AssemblyName>
-    <Name>I2C screen code</Name>
-    <RootNamespace>I2C screen code</RootNamespace>
+    <AssemblyName>SMT_code</AssemblyName>
+    <Name>SMT_code</Name>
+    <RootNamespace>SMT_code</RootNamespace>
     <ToolchainFlavour>Native</ToolchainFlavour>
     <KeepTimersRunning>true</KeepTimersRunning>
     <OverrideVtor>false</OverrideVtor>
@@ -30,17 +30,16 @@
     <EraseKey />
     <AsfFrameworkConfig>
       <framework-data xmlns="">
-        <options />
-        <configurations />
-        <files />
-        <documentation help="" />
-        <offline-documentation help="" />
-        <dependencies>
-          <content-extension eid="atmel.asf" uuidref="Atmel.ASF" version="3.52.0" />
-        </dependencies>
-      </framework-data>
+  <options />
+  <configurations />
+  <files />
+  <documentation help="" />
+  <offline-documentation help="" />
+  <dependencies>
+    <content-extension eid="atmel.asf" uuidref="Atmel.ASF" version="3.52.0" />
+  </dependencies>
+</framework-data>
     </AsfFrameworkConfig>
-    <avrtool />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
     <ToolchainSettings>
@@ -133,10 +132,10 @@
     <Compile Include="graph.h">
       <SubType>compile</SubType>
     </Compile>
-    <Compile Include="I2c.c">
+    <Compile Include="i2c.c">
       <SubType>compile</SubType>
     </Compile>
-    <Compile Include="I2c.h">
+    <Compile Include="i2c.h">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="main.c">

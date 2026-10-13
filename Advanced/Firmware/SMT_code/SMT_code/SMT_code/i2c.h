@@ -1,8 +1,8 @@
 /*
- * I2c.h
+ * i2c.h
  *
- * Created: 28/09/2026 1:40:13 pm
- *  Author: thoma
+ * Created: 14/10/2026 12:27:11 pm
+ *  Author: tsha374
  */ 
 
 
@@ -19,7 +19,6 @@ void i2c_init(void);
 uint8_t i2c_start(uint8_t address_with_rw);
 uint8_t i2c_write(uint8_t data);
 void i2c_stop(void);
-
 
 
 

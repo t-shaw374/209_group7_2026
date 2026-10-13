@@ -1,8 +1,8 @@
 /*
  * sh1106.h
  *
- * Created: 28/09/2026 2:39:38 pm
- *  Author: thoma
+ * Created: 14/10/2026 12:27:37 pm
+ *  Author: tsha374
  */ 
 
 
@@ -25,7 +25,6 @@ void sh1106_set_page(uint8_t page);
 // Stream exactly `len` bytes of pixel data into the current page,
 // starting at the controller's current column (0 after sh1106_set_page).
 void sh1106_write_page_data(const uint8_t *data, uint8_t len);
-
 
 
 

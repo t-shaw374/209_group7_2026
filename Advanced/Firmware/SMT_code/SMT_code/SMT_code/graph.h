@@ -1,7 +1,7 @@
 /*
  * graph.h
  *
- * Created: 1/10/2026 3:43:05 pm
+ * Created: 14/10/2026 12:26:41 pm
  *  Author: tsha374
  */ 
 
@@ -13,7 +13,6 @@
 // page by page. Uses only a single 128-byte stack buffer internally --
 // no persistent RAM cost between calls.
 void graph_render(void);
-
 
 
 
