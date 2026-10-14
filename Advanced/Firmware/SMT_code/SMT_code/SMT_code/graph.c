@@ -53,7 +53,7 @@ static void draw_string(uint8_t *buf, uint8_t x, const char *str)
 	}
 }
 
-void graph_render(void)
+void graph_render(const char *str)
 {
 	uint8_t buf[SCREEN_WIDTH]; // only RAM this uses: 128 bytes, one page at a time
 	
@@ -81,7 +81,7 @@ void graph_render(void)
 		
 		// --- Titles ---
 		if (page == 0) {
-			draw_string(buf, 90, "Y AXIS");  // title near top-right
+			draw_string(buf, 90, str);  // title near top-right
 		}
 		if (page == 7) {
 			draw_string(buf, 80, "X AXIS");  // title near bottom

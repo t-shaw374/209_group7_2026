@@ -12,18 +12,25 @@
 #include "i2c.h"
 #include "sh1106.h"
 #include "graph.h"
+#include "adc.h"
 
 int main(void)
 {
 	i2c_init();
 	sh1106_init();
 	
+	char mv_str[ADC_STR_LEN];                   // e.g. "1650"
+	adc_init();
+
 	while (1) {
-		graph_render();
+		uint16_t raw = adc_read(1);             // ADC1
+		uint16_t mv = adc_to_mv(raw);           // convert to millivolts
+
+		adc_mv_to_str(mv, mv_str);              // 4-digit string
 		
-		for (uint8_t i = 0; i < 10; i++) {
-			_delay_ms(100);
-		}
+		graph_render(mv_str);
+		_delay_ms(1000);
 	}
+
 }
 

@@ -11,7 +11,7 @@
 
 #include <avr/pgmspace.h>
 
-// Full A-Z, a-z, and space, 5 columns x 7 rows each (bit0 = top row,
+// Full A-Z, a-z, 0-9, and space, 5 columns x 7 rows each (bit0 = top row,
 // bit6 = bottom row). The entire table lives in flash via PROGMEM --
 // nothing here is ever copied into RAM. get_glyph() only returns a
 // pointer into flash; pgm_read_byte() then pulls one byte at a time
@@ -76,15 +76,31 @@ static const uint8_t font_table[53][5] PROGMEM = {
 	{0x44,0x64,0x54,0x4C,0x44}, // [52] 'z'
 };
 
+// Digits 0-9, 5 columns x 7 rows each (bit0 = top row), also in flash.
+static const uint8_t font_digits[10][5] PROGMEM = {
+	{0x3E,0x51,0x49,0x45,0x3E}, // '0'
+	{0x00,0x42,0x7F,0x40,0x00}, // '1'
+	{0x42,0x61,0x51,0x49,0x46}, // '2'
+	{0x21,0x41,0x45,0x4B,0x31}, // '3'
+	{0x18,0x14,0x12,0x7F,0x10}, // '4'
+	{0x27,0x45,0x45,0x45,0x39}, // '5'
+	{0x3C,0x4A,0x49,0x49,0x30}, // '6'
+	{0x01,0x71,0x09,0x05,0x03}, // '7'
+	{0x36,0x49,0x49,0x49,0x36}, // '8'
+	{0x06,0x49,0x49,0x29,0x1E}, // '9'
+};
+
 // Returns a pointer into flash for the requested character's glyph.
-// Unsupported characters (digits, punctuation) fall back to space.
+// Unsupported characters (punctuation) fall back to space.
 static inline const uint8_t* get_glyph(char c)
 {
 	if (c == ' ') return font_table[0];
 	if (c >= 'A' && c <= 'Z') return font_table[1 + (c - 'A')];
 	if (c >= 'a' && c <= 'z') return font_table[27 + (c - 'a')];
+	if (c >= '0' && c <= '9') return font_digits[c - '0'];
 	return font_table[0];
 }
+
 
 
 
