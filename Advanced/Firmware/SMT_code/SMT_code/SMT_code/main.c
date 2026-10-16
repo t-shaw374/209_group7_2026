@@ -32,7 +32,7 @@ int main(void)
 {
 	char mv_str[ADC_STR_LEN];
 
-	init_display();
+	init_display(64);
 	i2c_init();
 	sh1106_init();
 	adc_init();

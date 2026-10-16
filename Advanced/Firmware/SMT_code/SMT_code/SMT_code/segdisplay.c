@@ -33,14 +33,18 @@ static volatile uint8_t disp_position = 0;
 
 #define DS_MASK ((1 << DS1_pin) | (1 << DS2_pin) | (1 << DS3_pin) | (1 << DS4_pin))
 
-void init_display(void)
+void init_display(uint8_t brightness)
 {
 	DDRB |= (1 << SH_CP_pin) | (1 << SH_DS_pin) | (1 << SH_ST_pin);
 	DDRD |= DS_MASK | (1 << OE_pin);
 
 	PORTB &= ~((1 << SH_CP_pin) | (1 << SH_ST_pin));
-	PORTD |= DS_MASK;           // all digits off
-	PORTD &= ~(1 << OE_pin);    // enable shift register outputs
+	PORTD |= DS_MASK;                       // all digits off
+
+	// Timer2 fast PWM on OC2B (PD3), inverting, no prescaler
+	TCCR2A = (1 << COM2B1) | (1 << COM2B0) | (1 << WGM21) | (1 << WGM20);
+	TCCR2B = (1 << CS20);
+	OCR2B  = brightness;                    // set initial brightness
 }
 
 void seperate_and_load_characters(uint16_t number, uint8_t decimal_pos)
