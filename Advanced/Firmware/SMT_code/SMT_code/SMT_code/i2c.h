@@ -13,7 +13,7 @@
 
 
 // F_CPU must be defined by the project (Project Properties -> Toolchain -> Symbols),
-// e.g. F_CPU=16000000UL
+// e.g. F_CPU=2000000UL
 
 void i2c_init(void);
 uint8_t i2c_start(uint8_t address_with_rw);

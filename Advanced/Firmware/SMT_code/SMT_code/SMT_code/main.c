@@ -8,6 +8,7 @@
 #include "graph.h"
 #include "adc.h"
 #include "segdisplay.h"
+#include "uart.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -27,8 +28,18 @@ static state_t g_state = STATE_INIT;
 #define SET_STATE(s)    (g_state = (s))
 
 
+// A full capture takes about 40-80 ms when the zero crossing is present,
+// so this only ever expires if the crossing is missing.
+#define CAPTURE_TIMEOUT_MS  500U
+#define ERROR_RETRY_MS      1000U
+
+// 9600 baud at 2 MHz, normal speed: UBRR = F_CPU/(16*baud) - 1 = 12 (0.2% error)
+#define UART_BAUD           9600UL
+#define UART_UBRR           ((uint16_t)((F_CPU / (16UL * UART_BAUD)) - 1))
+
 static uint16_t mv = 0;
 static char mv_str[ADC_STR_LEN];
+static uint16_t capture_wait_ms = 0;
 
 static void state_machine_run(void)
 {
@@ -40,6 +51,7 @@ static void state_machine_run(void)
 		sh1106_init();
 		adc_timer_init();
 		zc_init();
+		usart_init(UART_UBRR);
 		sei();
 		SET_STATE(STATE_ADC);
 		break;
@@ -50,6 +62,7 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_ADC:
+		capture_wait_ms = 0;
 		adc_start_capture();                   // pauses the 7-seg until done
 		SET_STATE(STATE_ADC_WAIT);
 		break;
@@ -57,6 +70,12 @@ static void state_machine_run(void)
 		case STATE_ADC_WAIT:
 		if (adc_capture_done()) {
 			SET_STATE(STATE_CALC);
+			} else if (capture_wait_ms >= CAPTURE_TIMEOUT_MS) {
+			adc_abort_capture();               // also resumes the 7-seg scan
+			SET_STATE(STATE_ERROR);
+			} else {
+			_delay_ms(1);
+			capture_wait_ms++;
 		}
 		break;
 
@@ -66,11 +85,12 @@ static void state_machine_run(void)
 		case STATE_CALC:
 		
 		adc_mv_to_str(mv, mv_str);   // "0825" style string for the OLED
-		SET_STATE(STATE_7SEG);           // nothing to send over UART yet
+		SET_STATE(STATE_UART);
 		break;
 
 		case STATE_UART:
-		/* TODO: no UART code exists yet, so nothing routes here */
+		send_mV_value(mv);               // 4 ASCII digits, e.g. "0825"
+		uart_tx_string("\r\n");
 		SET_STATE(STATE_7SEG);
 		break;
 
@@ -85,7 +105,9 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_ERROR:
-		/* TODO: decide what a fault should do (e.g. show 8888 and retry INIT) */
+		seperate_and_load_characters(8888, 0);  // 8888 on the 7-seg = capture failed
+		_delay_ms(ERROR_RETRY_MS);
+		SET_STATE(STATE_ADC);                   // try another capture
 		break;
 
 		default:

@@ -10,6 +10,7 @@
 #define SH1106_H_
 
 #include <avr/io.h>
+#include <stdint.h>
 
 #define SH1106_ADDR    0x3C   // 7-bit address; some modules use 0x3D
 

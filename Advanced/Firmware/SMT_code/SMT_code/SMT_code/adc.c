@@ -34,6 +34,7 @@ static volatile uint16_t raw_array[2][NUM_POINTS];
 static volatile uint8_t array_pos       = 0;   // current write position
 static volatile uint8_t signal_select   = 1;   // 0 = voltage, 1 = current
 static volatile uint8_t num_adc_samples = 0;   // samples taken in current pass
+static volatile uint8_t match_count     = 0;   // compare-B matches (triggers) in current pass
 static volatile uint8_t cycle_num       = NUM_CYCLES - 1;  // current offset index
 static volatile uint8_t capture_busy    = 0;   // a pass is currently sampling
 static volatile uint8_t capture_running = 0;   // a full capture is in progress
@@ -45,12 +46,14 @@ static volatile uint8_t capture_finished = 0;  // all passes collected
 static void adc_trigger_enable(void)
 {
 	TIFR1   = (1 << OCF1B);          // clear any stale trigger flag first
+	TIMSK1 |= (1 << OCIE1B);         // compare-B ISR re-arms OCR1B (also clears the flag)
 	ADCSRA |= (1 << ADATE);          // auto-trigger on Timer1 compare B
 }
 
 static void adc_trigger_disable(void)
 {
-	ADCSRA &= ~(1 << ADATE);         // ADC ignores the timer
+	ADCSRA  &= ~(1 << ADATE);        // ADC ignores the timer
+	TIMSK1  &= ~(1 << OCIE1B);       // no more re-arming
 }
 
 static void adc_switch_channel(uint8_t channel)
@@ -84,6 +87,7 @@ ISR(PCINT1_vect)
 
 	array_pos       = cycle_num;          // current reuses its voltage's offset
 	num_adc_samples = 0;
+	match_count     = 0;
 	capture_busy    = 1;
 
 	TCNT1 = 0;                            // align timer to the zero crossing
@@ -92,13 +96,32 @@ ISR(PCINT1_vect)
 }
 
 // ---------------------------------------------------------------------
+// Timer1 compare B: fires at every sample trigger
+//
+// The match sets OCF1B (which starts the conversion); running this ISR
+// clears it again so the next match makes a fresh rising edge. The next
+// match is scheduled here, right after the current one, so there is a
+// full 125 us of margin. Doing it at the end of the ADC ISR left only
+// ~30 ticks after the conversion finished, which the ISR could overrun.
+// ---------------------------------------------------------------------
+ISR(TIMER1_COMPB_vect)
+{
+	if (++match_count < SAMPLES_PER_PASS) {
+		OCR1B += T1_STEP_TICKS;           // next sample 125 us later (max 3976, never wraps)
+	} else {
+		OCR1B = T1_PERIOD_TICKS;          // above OCR1A, so no 17th trigger can happen
+	}
+}
+
+// ---------------------------------------------------------------------
 // ADC conversion complete
 // ---------------------------------------------------------------------
 ISR(ADC_vect)
 {
+	if (!capture_running) return;         // capture was aborted while a conversion was in flight
+
 	raw_array[signal_select][array_pos] = ADC;
 	array_pos += NUM_CYCLES;              // stride 10: index = sample*10 + pass, max 159
-	TIFR1 = (1 << OCF1B);                 // clear trigger flag (write 1 to clear)
 
 	if (++num_adc_samples >= SAMPLES_PER_PASS) {
 		adc_trigger_disable();
@@ -110,8 +133,6 @@ ISR(ADC_vect)
 			capture_finished = 1;
 			display_resume();             // 7-seg scan back on
 		}
-	} else {
-		OCR1B += T1_STEP_TICKS;           // next sample 125 us later (max 3976, never wraps)
 	}
 }
 
