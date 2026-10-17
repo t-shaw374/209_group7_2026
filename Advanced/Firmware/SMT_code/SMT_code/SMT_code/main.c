@@ -13,6 +13,7 @@ typedef enum {
 	STATE_INIT = 0,
 	STATE_PERIOD,
 	STATE_ADC,
+	STATE_ADC_WAIT,
 	STATE_CALC,
 	STATE_UART,
 	STATE_7SEG,
@@ -38,6 +39,7 @@ static void state_machine_run(void)
 		i2c_init();
 		sh1106_init();
 		adc_timer_init();
+		zc_init();
 		sei();
 		SET_STATE(STATE_ADC);
 		break;
@@ -48,6 +50,15 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_ADC:
+		adc_start_capture();                   // pauses the 7-seg until done
+		SET_STATE(STATE_ADC_WAIT);
+		break;
+
+		case STATE_ADC_WAIT:
+		if (adc_capture_done()) {
+			SET_STATE(STATE_CALC);
+		}
+		break;
 
 		SET_STATE(STATE_CALC);
 		break;
