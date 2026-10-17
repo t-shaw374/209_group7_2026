@@ -39,12 +39,23 @@ void init_display(uint8_t brightness)
 	DDRD |= DS_MASK | (1 << OE_pin);
 
 	PORTB &= ~((1 << SH_CP_pin) | (1 << SH_ST_pin));
-	PORTD |= DS_MASK;                       // all digits off
+	PORTD |= DS_MASK;
 
-	// Timer2 fast PWM on OC2B (PD3), inverting, no prescaler
+	// Timer2: inverting fast PWM on OC2B (brightness)
 	TCCR2A = (1 << COM2B1) | (1 << COM2B0) | (1 << WGM21) | (1 << WGM20);
 	TCCR2B = (1 << CS20);
-	OCR2B  = brightness;                    // set initial brightness
+	OCR2B  = brightness;
+
+	// Timer0: CTC, ~977 Hz digit scan
+	TCCR0A = (1 << WGM01);
+	TCCR0B = (1 << CS02);
+	OCR0A  = 7;
+	TIMSK0 = (1 << OCIE0A);
+}
+
+ISR(TIMER0_COMPA_vect)
+{
+	send_next_character_to_display();
 }
 
 void seperate_and_load_characters(uint16_t number, uint8_t decimal_pos)

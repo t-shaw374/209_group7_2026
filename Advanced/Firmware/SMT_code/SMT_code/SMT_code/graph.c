@@ -27,13 +27,14 @@
 // 0 = top of screen, 54 = just above the x-axis). Stored in flash only.
 // Replace this with your own values if driving the graph from real data.
 // ---------------------------------------------------------------------
-#define NUM_POINTS 22
-static const uint8_t demo_data[NUM_POINTS] PROGMEM = {
-	50, 45, 38, 30, 22, 15, 10,  8, 10, 15, 22,
-	30, 38, 45, 50, 52, 50, 45, 38, 30, 22, 15
-};
-#define POINT_SPACING 5  // pixels between consecutive points on screen
+#define NUM_POINTS     10                                  // change this
+#define PLOT_X0        (AXIS_X + 2)
+#define PLOT_WIDTH     (SCREEN_WIDTH - PLOT_X0)            // 110 columns
+#define POINT_SPACING  (PLOT_WIDTH / NUM_POINTS)           // 22 pts -> 5 px
 
+static const uint8_t demo_data[NUM_POINTS] PROGMEM = {
+	50, 45, 38, 30, 22, 15, 10,  8, 10, 15
+};
 // ---------------------------------------------------------------------
 // Draw a string into a page buffer. Characters whose full 7-row glyph
 // doesn't fit within a single page will look clipped -- keep labels on
@@ -92,7 +93,7 @@ void graph_render(const char *str)
 			uint8_t y = pgm_read_byte(&demo_data[i]);
 			uint8_t point_page = y / 8;
 			if (point_page == page) {
-				uint8_t x = AXIS_X + 2 + (i * POINT_SPACING);
+				uint8_t x = PLOT_X0 + (i * POINT_SPACING);
 				if (x < SCREEN_WIDTH) {
 					buf[x] |= (1 << (y % 8));
 				}

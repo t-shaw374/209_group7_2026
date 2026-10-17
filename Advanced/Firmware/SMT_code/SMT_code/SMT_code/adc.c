@@ -9,7 +9,7 @@
 
 void adc_init(void)
 {
-	ADMUX = 0;                       // AVcc reference
+	ADMUX = 0;                       // Aref reference
 	DIDR0 |= (1 << ADC1D);                      // disable digital buffer on ADC1 (PC1)
 	ADCSRA = (1 << ADEN) | (1 << ADPS2);        // enable, prescaler 16 -> 125 kHz at 2 MHz
 }
