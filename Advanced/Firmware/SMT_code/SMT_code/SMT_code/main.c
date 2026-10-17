@@ -8,6 +8,7 @@
 #include "graph.h"
 #include "adc.h"
 #include "segdisplay.h"
+#include "zerocross.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -38,6 +39,7 @@ static void state_machine_run(void)
 		i2c_init();
 		sh1106_init();
 		adc_init();
+		zc_init();
 		sei();
 		SET_STATE(STATE_ADC);
 		break;
