@@ -15,6 +15,10 @@ void init_display(uint8_t brightness);
 void seperate_and_load_characters(uint16_t number, uint8_t decimal_pos);
 void send_next_character_to_display(void);
 
+// Pause/resume the digit scan (pause also blanks the digits)
+void display_pause(void);
+void display_resume(void);
+
 
 
 #endif /* 7SEG_H_ */

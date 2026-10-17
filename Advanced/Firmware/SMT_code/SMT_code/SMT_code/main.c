@@ -8,7 +8,6 @@
 #include "graph.h"
 #include "adc.h"
 #include "segdisplay.h"
-#include "zerocross.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -26,9 +25,9 @@ static state_t g_state = STATE_INIT;
 /* Call from inside any state to move to another one */
 #define SET_STATE(s)    (g_state = (s))
 
-static uint16_t g_raw = 0;
-static uint16_t g_mv  = 0;
-static char     g_mv_str[ADC_STR_LEN];
+
+static uint16_t mv = 0;
+static char mv_str[ADC_STR_LEN];
 
 static void state_machine_run(void)
 {
@@ -38,8 +37,7 @@ static void state_machine_run(void)
 		init_display(128);
 		i2c_init();
 		sh1106_init();
-		adc_init();
-		zc_init();
+		adc_timer_init();
 		sei();
 		SET_STATE(STATE_ADC);
 		break;
@@ -50,14 +48,13 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_ADC:
-		g_raw = adc_read(1);             // PC1 / ADC1
-		g_mv = adc_to_mv(g_raw);
+
 		SET_STATE(STATE_CALC);
 		break;
 
 		case STATE_CALC:
 		
-		adc_mv_to_str(g_mv, g_mv_str);   // "0825" style string for the OLED
+		adc_mv_to_str(mv, mv_str);   // "0825" style string for the OLED
 		SET_STATE(STATE_7SEG);           // nothing to send over UART yet
 		break;
 
@@ -67,12 +64,12 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_7SEG:
-		seperate_and_load_characters(g_mv, 0);
+		seperate_and_load_characters(mv, 0);
 		SET_STATE(STATE_OLED);
 		break;
 
 		case STATE_OLED:
-		graph_render(g_mv_str);
+		graph_render(mv_str);
 		SET_STATE(STATE_PERIOD);
 		break;
 

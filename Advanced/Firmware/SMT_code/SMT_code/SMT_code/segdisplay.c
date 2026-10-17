@@ -101,3 +101,16 @@ void send_next_character_to_display(void)
 
 	if (++disp_position > 3) disp_position = 0;
 }
+
+// Stop the digit scan and blank the display (used while the ADC is sampling,
+// so the scan ISR can't disturb sample timing)
+void display_pause(void)
+{
+	TIMSK0 &= ~(1 << OCIE0A);     // stop the scan interrupt
+	PORTD  |= DS_MASK;            // all digits off, so one digit doesn't stay lit bright
+}
+
+void display_resume(void)
+{
+	TIMSK0 |= (1 << OCIE0A);
+}
