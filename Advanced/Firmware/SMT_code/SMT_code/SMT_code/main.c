@@ -70,13 +70,8 @@ static void state_machine_run(void)
 		case STATE_ADC_WAIT:
 		if (adc_capture_done()) {
 			SET_STATE(STATE_CALC);
-			} else if (capture_wait_ms >= CAPTURE_TIMEOUT_MS) {
-			adc_abort_capture();               // also resumes the 7-seg scan
-			SET_STATE(STATE_ERROR);
-			} else {
-			_delay_ms(1);
-			capture_wait_ms++;
 		}
+		
 		break;
 
 		SET_STATE(STATE_CALC);
@@ -89,8 +84,13 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_UART:
-		send_mV_value(mv);               // 4 ASCII digits, e.g. "0825"
-		uart_tx_string("\r\n");
+		// One row per timestep: "VVVV IIII\r\n", voltage then current in mV
+		for (uint8_t i = 0; i < ADC_NUM_POINTS; i++) {
+			send_mV_value(adc_to_mv(adc_get_raw(0, i)));   // voltage
+			usart_transmit(' ');
+			send_mV_value(adc_to_mv(adc_get_raw(1, i)));   // current
+			uart_tx_string("\r\n");
+		}
 		SET_STATE(STATE_7SEG);
 		break;
 

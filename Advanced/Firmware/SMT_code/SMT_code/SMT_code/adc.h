@@ -14,6 +14,7 @@
 #define ADC_VREF_MV   3300UL   // must equal the voltage on the AREF pin
 #define ADC_STEPS     1024UL   // 2^10
 #define ADC_STR_LEN   5        // 4 digits + '\0'
+#define ADC_NUM_POINTS 160     // points per channel in a full capture (16 samples x 10 passes)
 
 // Timer1 + ADC setup (external AREF, auto-trigger on Timer1 compare B).
 // Sampling doesn't start until adc_start_capture() and a zero crossing.
