@@ -1,7 +1,8 @@
-// Equivalent-time sampling (ETS) of voltage and current, ATmega328P @ 2 MHz
+// Equivalent-time sampling (ETS) of voltage and current, ATmega328PB @ 2 MHz
 //
 // - ADC clock = 2 MHz / 16 = 125 kHz  (conversion = 13 ADC clocks = 104 us)
-// - Timer0 CTC, compare match A every 250 ticks (125 us) auto-triggers the ADC
+// - Timer1 CTC (mode 4, TOP = OCR1A), compare match B every 250 ticks (125 us)
+//   auto-triggers the ADC. Timer0 is not used here.
 // - Zero-crossing signal on PC0 (ADC0 pin, digital input) via pin-change interrupt.
 // - One capture = exactly 16 samples = one 2 ms period. A rising edge starts the
 //   timer, and the timer stops itself after the 16th trigger. The next capture
@@ -17,6 +18,8 @@
 // - The channel is switched in the edge interrupt, just before the timer starts.
 //   The ADC locks its channel once a conversion has started, so switching while
 //   the last conversion of the previous capture is still running is safe.
+// - Timer1 is 16-bit, so T_SAMPLE can go above 255 ticks if the signal period
+//   gets longer. Keep it at least ~210 ticks (104 us conversion plus margin).
 //
 // Signals to be measured: ADC1 (PC1, voltage) and ADC2 (PC2, current).
 
@@ -28,6 +31,11 @@
 #define STEP      25     // timer ticks per offset step (12.5 us)
 #define T_FIRST   8      // timer ticks from start to the first trigger at offset 0
 #define CAPTURES  (2 * ADC_OFFSETS)
+
+// WGM12 (CTC mode bit) lives in TCCR1B together with the clock select bits,
+// so stopping the timer must keep WGM12 set. Never write TCCR1B = 0.
+#define T1_STOPPED  (1 << WGM12)                 // CTC mode 4, no clock
+#define T1_RUNNING  ((1 << WGM12) | (1 << CS10)) // CTC mode 4, prescaler 1
 
 volatile uint16_t adc_buf[2][ADC_POINTS];
 
@@ -48,32 +56,34 @@ static volatile uint8_t  done;         // all captures stored
 // next one, so those captures take two periods. Nothing is corrupted.
 // (This ISR needs ~36 us from the edge to starting the timer. That delay is the
 // same every time, so it only shifts all samples by a constant.)
+// TCNT1 is a 16-bit write; it is safe here because this ISR runs with interrupts
+// off and no other ISR touches 16-bit Timer1 registers.
 ISR(PCINT1_vect)
 {
 	if (!(PINC & (1 << PC0))) {
 		return;                                      // falling edge, ignore
 	}
-	if (running && start_idx < CAPTURES && TCCR0B == 0) {
+	if (running && start_idx < CAPTURES && TCCR1B == T1_STOPPED) {
 		uint8_t i = start_idx++;
 		ADMUX  = (ADMUX & 0xF0) | mux_ch[i & 1];     // V on even, I on odd captures
-		TCNT0  = (T_SAMPLE - T_FIRST) - STEP * (i >> 1);
+		TCNT1  = (T_SAMPLE - T_FIRST) - STEP * (i >> 1);
 		trig   = 0;
-		TIFR0  = (1 << OCF0A);                       // clear stale compare flag
-		TCCR0B = (1 << CS00);                        // start timer, prescaler 1
+		TIFR1  = (1 << OCF1B);                       // clear stale compare flag
+		TCCR1B = T1_RUNNING;                         // start timer, prescaler 1
 	}
 }
 
-// Runs right after every compare match. Entering it makes the hardware clear
-// OCF0A, which the ADC needs (it triggers on the rising edge of that flag, so the
+// Runs right after every compare match B. Entering it makes the hardware clear
+// OCF1B, which the ADC needs (it triggers on the rising edge of that flag, so the
 // flag has to be low again before the next match). Also stops the timer after
 // the 16th trigger.
 // ISR_NOBLOCK re-enables interrupts at entry, so the zero-crossing interrupt can
 // pre-empt this one. Otherwise it could be delayed by up to ~20 us and the next
 // capture would start late.
-ISR(TIMER0_COMPA_vect, ISR_NOBLOCK)
+ISR(TIMER1_COMPB_vect, ISR_NOBLOCK)
 {
 	if (++trig == ADC_SAMPLES) {
-		TCCR0B = 0;
+		TCCR1B = T1_STOPPED;
 	}
 }
 
@@ -100,11 +110,11 @@ ISR(ADC_vect, ISR_NOBLOCK)
 void adc_init(void)
 {
 	// ADC: Aref reference, prescaler 16 -> 125 kHz,
-	// auto-trigger on Timer0 compare match A
+	// auto-trigger on Timer1 compare match B
 	ADMUX  = (0);
 	adc_set_channel(ADC_CH_V);
 	DIDR0 |= (1 << ADC_CH_V) | (1 << ADC_CH_I);   // digital buffers off on both signal pins
-	ADCSRB = (1 << ADTS1) | (1 << ADTS0);
+	ADCSRB = (1 << ADTS2) | (1 << ADTS0);         // trigger source: Timer1 compare match B
 
 	// Dummy conversion: the first conversion after ADEN takes 25 ADC clocks
 	// (200 us) instead of 13, which is longer than the 125 us trigger spacing
@@ -117,10 +127,13 @@ void adc_init(void)
 	// Now switch on auto-trigger and the conversion-complete interrupt
 	ADCSRA = (1 << ADEN) | (1 << ADATE) | (1 << ADIE) | (1 << ADPS2);
 
-	// Timer0: CTC mode, TOP = OCR0A, started later by the zero-crossing ISR
-	TCCR0A = (1 << WGM01);
-	OCR0A  = T_SAMPLE - 1;
-	TIMSK0 = (1 << OCIE0A);
+	// Timer1: CTC mode 4, TOP = OCR1A, started later by the zero-crossing ISR.
+	// OCR1B = TOP, so match B lands at the same count the old Timer0 match did.
+	TCCR1A = 0;
+	TCCR1B = T1_STOPPED;
+	OCR1A  = T_SAMPLE - 1;
+	OCR1B  = T_SAMPLE - 1;
+	TIMSK1 = (1 << OCIE1B);
 
 	// Pin change interrupt on PC0 (PCINT8)
 	PCMSK1 = (1 << PCINT8);
