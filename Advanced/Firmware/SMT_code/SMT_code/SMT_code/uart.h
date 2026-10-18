@@ -13,5 +13,6 @@ void uart_init(void);                 // TX only, 8N1
 void uart_putc(char c);               // blocking
 void uart_puts(const char *s);        // blocking, null-terminated string
 void uart_put_u16(uint16_t v);        // value as decimal text (no newline)
+void uart_put_i16(int16_t v);         // signed decimal text (no newline)
 
 #endif

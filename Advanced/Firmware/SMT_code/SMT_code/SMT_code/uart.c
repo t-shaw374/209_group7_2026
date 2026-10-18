@@ -38,3 +38,13 @@ void uart_put_u16(uint16_t v)
 		uart_putc(tmp[--i]);
 	}
 }
+
+void uart_put_i16(int16_t v)
+{
+	if (v < 0) {
+		uart_putc('-');
+		uart_put_u16((uint16_t)(-(int32_t)v));   // int32 so -32768 works
+		} else {
+		uart_put_u16((uint16_t)v);
+	}
+}

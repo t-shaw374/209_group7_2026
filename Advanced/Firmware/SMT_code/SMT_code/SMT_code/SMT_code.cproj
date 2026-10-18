@@ -133,6 +133,12 @@
     </ToolchainSettings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="convert.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="convert.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="segdisplay.c">
       <SubType>compile</SubType>
     </Compile>

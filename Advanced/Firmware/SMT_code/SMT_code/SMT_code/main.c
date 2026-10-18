@@ -10,6 +10,7 @@
 #include "segdisplay.h"
 #include "uart.h"
 #include "timeout.h"
+#include "convert.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -88,6 +89,7 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_CALC:
+		convert_to_real();
 		SET_STATE(STATE_UART);
 		break;
 
@@ -95,9 +97,9 @@ static void state_machine_run(void)
 		
 		//one line per instant: voltage,current  (CR+LF), blank line after the set
 		for (uint16_t i = 0; i < ADC_POINTS; i++) {
-			uart_put_u16(adc_buf[ADC_VOLT][i]);
+			uart_put_i16(REAL_MV[i]);
 			uart_putc(' ');
-			uart_put_u16(adc_buf[ADC_CURR][i]);
+			uart_put_i16(REAL_MA[i]);
 			uart_puts("\r\n");
 		}
 		uart_puts("\r\n");
