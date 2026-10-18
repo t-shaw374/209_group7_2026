@@ -51,8 +51,9 @@ void mv_to_str(uint16_t mv, char *buf)
 
 
 static void state_machine_run(void)
-{
-	uint8_t present;                 
+{ 
+	uint8_t present;
+	uint8_t ok;           
 	
 	switch (g_state) {
 
@@ -92,7 +93,7 @@ static void state_machine_run(void)
 		case STATE_UART:
 		
 		//one line per instant: voltage,current  (CR+LF), blank line after the set
-		for (uint8_t i = 0; i < ADC_POINTS; i++) {
+		for (uint16_t i = 0; i < ADC_POINTS; i++) {
 			uart_put_u16(adc_buf[ADC_VOLT][i]);
 			uart_putc(' ');
 			uart_put_u16(adc_buf[ADC_CURR][i]);
