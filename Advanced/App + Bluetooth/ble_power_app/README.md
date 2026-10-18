@@ -17,7 +17,8 @@ Web page (draws the received values)           app/index.html
 | File | Runs on | What it does |
 |---|---|---|
 | `mega/ble_report.c/.h` | ATmega | Formats the computed values into the line protocol, using integers only |
-| `mega/example_main.c` | ATmega | Shows how to call the module. Uses placeholder values until the real maths is written |
+| `mega/ble_cmd.c/.h` | ATmega | Receives command lines from the app (RX interrupt), e.g. `RESETMM` |
+| `mega/example_main.c` | ATmega | Shows how to call the modules and track min/max. Uses placeholder values until the real maths is written |
 | `esp32_ble_bridge/esp32_ble_bridge.ino` | ESP32 | Transparent BLE ↔ UART bridge |
 | `app/index.html` | Chrome / Edge | Live power graph, readings, raw log, CSV save, demo mode |
 
@@ -26,10 +27,18 @@ Web page (draws the received values)           app/index.html
 ```
 A,0.00,8.00,W                  graph axis min, max, unit (chosen by the ATmega)
 D,42,12.98,0.263,3.41,0.99     t, Vrms [V], Irms [A], P [W], PF
+M,2.45,7.46                    min and max real power [W] (tracked on the ATmega)
+```
+
+App → ATmega commands (one per line):
+
+```
+RESETMM                        clear the min/max (sent by the app's "Reset min/max" button)
 ```
 
 - Send `A,...` at start-up **and** every ~10 readings, so an app that connects late still gets the axis.
 - The app shows the strings exactly as received. The only arithmetic it does is placing received values on screen pixels.
+- Min/max ignore readings below `NO_LOAD_mW` (50 mW), so the minimum doesn't just read 0.00 W with nothing plugged in. They reset on `RESETMM` or an ATmega restart.
 - `t` is the ATmega's own time stamp (for example seconds since power-up). If `t` goes backwards, the app assumes a restart and clears the graph.
 
 ## Wiring (ESP32 to P1)

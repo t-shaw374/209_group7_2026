@@ -10,6 +10,9 @@
  *       e.g.  D,42,12.98,0.263,3.41,0.99
  *       t    = time stamp kept by the ATmega (e.g. seconds since power-up)
  *       Vrms = volts (2 dp), Irms = amps (3 dp), P = watts (2 dp), PF (2 dp)
+ *   M,<Pmin>,<Pmax>                      min / max real power so far, watts (2 dp)
+ *       e.g.  M,2.45,7.46
+ *       tracked on the ATmega; cleared when the app sends "RESETMM" (see ble_cmd.h)
  *
  * Send the axis line at start-up AND every so often (e.g. every 10 readings),
  * because the app may connect after the ATmega has already started.
@@ -31,6 +34,9 @@ void ble_send_reading(uint16_t t,
                       uint32_t irms_mA,
                       uint32_t p_mW,
                       uint16_t pf_milli);
+
+/* Min / max real power tracked by the ATmega, in milliwatts. */
+void ble_send_minmax(uint32_t p_min_mW, uint32_t p_max_mW);
 
 /* Helper, also useful for the 7-segment display: prints milli-units as a decimal
  * with 1-3 decimal places, rounded, e.g. (12984, 2) -> "12.98". */

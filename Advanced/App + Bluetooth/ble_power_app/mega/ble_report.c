@@ -73,3 +73,12 @@ void ble_send_reading(uint16_t t,
 	ble_send_fixed(pf_milli, 2);
 	usart_transmit('\n');
 }
+
+void ble_send_minmax(uint32_t p_min_mW, uint32_t p_max_mW)
+{
+	send_str("M,");
+	ble_send_fixed(p_min_mW, 2);
+	usart_transmit(',');
+	ble_send_fixed(p_max_mW, 2);
+	usart_transmit('\n');
+}
