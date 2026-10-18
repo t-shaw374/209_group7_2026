@@ -59,28 +59,33 @@ static volatile uint8_t disp_position = 0;
 
 static volatile uint32_t tick_count = 0;
 
-// ---- Pin definitions ----
-#define SH_DS_pin 4
-#define SH_CP_pin 3
-#define SH_ST_pin 5
-#define DS1_pin   4
-#define DS2_pin   5
-#define DS3_pin   6
-#define DS4_pin   7
+// ---- Pin definitions (SMT board, header P6) ----
+// shift register on PORTB, digit enables + output enable on PORTD
+#define SH_CP_pin 0     // PB0
+#define SH_ST_pin 1     // PB1
+#define SH_DS_pin 2     // PB2
+#define DS1_pin   7     // PD7
+#define DS2_pin   6     // PD6
+#define DS3_pin   5     // PD5
+#define DS4_pin   4     // PD4
+#define OE_pin    3     // PD3: shift register output enable, active low
 
 void init_display(void)
 {
-	// SH_DS, SH_CP, SH_ST on PORTC as outputs
-	DDRC |= (1 << SH_CP_pin) | (1 << SH_DS_pin) | (1 << SH_ST_pin);
+	// SH_DS, SH_CP, SH_ST on PORTB as outputs
+	DDRB |= (1 << SH_CP_pin) | (1 << SH_DS_pin) | (1 << SH_ST_pin);
 
-	// Ds1-Ds4 on PORTD as outputs
-	DDRD |= (1 << DS1_pin) | (1 << DS2_pin) | (1 << DS3_pin) | (1 << DS4_pin);
+	// Ds1-Ds4 and OE on PORTD as outputs
+	DDRD |= (1 << DS1_pin) | (1 << DS2_pin) | (1 << DS3_pin) | (1 << DS4_pin) | (1 << OE_pin);
 
 	// Shift register control lines start low
-	PORTC &= ~((1 << SH_CP_pin) | (1 << SH_ST_pin));
+	PORTB &= ~((1 << SH_CP_pin) | (1 << SH_ST_pin));
 
 	// All digits disabled initially (logic 1 = off)
 	PORTD |= (1 << DS1_pin) | (1 << DS2_pin) | (1 << DS3_pin) | (1 << DS4_pin);
+
+	// Shift register outputs on (OE is active low)
+	PORTD &= ~(1 << OE_pin);
 }
 
 // Populate the array 'disp_characters[]' by separating the four digits of 'number'
@@ -125,25 +130,25 @@ void send_next_character_to_display(void)
 	uint8_t pattern = disp_characters[disp_position];
 
 	// 2. Send this bit pattern to the shift register
-	PORTC &= ~(1 << SH_CP_pin);
+	PORTB &= ~(1 << SH_CP_pin);
 
 	for (int8_t i = 7; i >= 0; i--)
 	{
 		if (pattern & (1 << i)) {
-			PORTC |= (1 << SH_DS_pin);
+			PORTB |= (1 << SH_DS_pin);
 		} else {
-			PORTC &= ~(1 << SH_DS_pin);
+			PORTB &= ~(1 << SH_DS_pin);
 		}
-		PORTC |= (1 << SH_CP_pin);
-		PORTC &= ~(1 << SH_CP_pin);
+		PORTB |= (1 << SH_CP_pin);
+		PORTB &= ~(1 << SH_CP_pin);
 	}
 
 	// 3. Disable all digits BEFORE latching the new pattern
 	PORTD |= (1 << DS1_pin) | (1 << DS2_pin) | (1 << DS3_pin) | (1 << DS4_pin);
 
 	// 4. Latch the output by toggling SH_ST
-	PORTC |= (1 << SH_ST_pin);
-	PORTC &= ~(1 << SH_ST_pin);
+	PORTB |= (1 << SH_ST_pin);
+	PORTB &= ~(1 << SH_ST_pin);
 
 	// 5. Enable the correct digit
 	switch (disp_position)

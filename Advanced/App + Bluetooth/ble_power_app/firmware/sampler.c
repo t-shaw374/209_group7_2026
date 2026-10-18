@@ -7,8 +7,9 @@
 #include <util/atomic.h>
 #include "sampler.h"
 
-#define ADMUX_V  ((1 << REFS0) | 0)   /* AVCC reference, ADC0 = Vmeas */
-#define ADMUX_I  ((1 << REFS0) | 1)   /* AVCC reference, ADC1 = Imeas */
+#define ADMUX_REF ((ADC_REFS_BITS) << REFS0)     /* external AREF on the SMT board */
+#define ADMUX_V   (ADMUX_REF | ADC_CH_V)
+#define ADMUX_I   (ADMUX_REF | ADC_CH_I)
 
 #define T1_TOP   ((uint16_t)((F_CPU / 1000000UL) * SAMPLE_US) - 1)   /* 399 at 2 MHz */
 
@@ -20,11 +21,12 @@ static volatile uint16_t s_zc;
 
 void sampler_init(void)
 {
-	/* ADC: AVCC ref, prescaler 16 -> 125 kHz (Lab 4), auto-trigger on Timer1 compare B */
+	/* ADC: external AREF, prescaler 16 -> 125 kHz (Lab 4), auto-trigger on Timer1 compare B */
 	ADMUX  = ADMUX_V;
 	ADCSRA = (1 << ADEN) | (1 << ADPS2);
 	ADCSRB = (1 << ADTS2) | (1 << ADTS0);           /* 101 = Timer/Counter1 Compare Match B */
-	DIDR0  = (1 << ADC0D) | (1 << ADC1D) | (1 << ADC2D); /* analogue pins: digital buffers off */
+	DIDR0  = (1 << ADC1D) | (1 << ADC2D) | (1 << ADC3D); /* analogue pins: digital buffers off
+	                                                       (not PC0: the zero-crossing input) */
 
 	/* first conversion after enabling is a long one; get it out of the way */
 	ADCSRA |= (1 << ADSC);
@@ -36,16 +38,17 @@ void sampler_init(void)
 	OCR1A  = T1_TOP;
 	OCR1B  = T1_TOP;
 
-	/* INT0 (PD2) on rising edges of the zero-crossing comparator */
-	DDRD  &= ~(1 << PD2);
-	EICRA  = (EICRA & ~((1 << ISC01) | (1 << ISC00))) | (1 << ISC01) | (1 << ISC00);
-	EIFR   = (1 << INTF0);
-	EIMSK |= (1 << INT0);
+	/* zero-crossing comparator (VvmCZ) on PC0: pin-change interrupt PCINT8 */
+	DDRC   &= ~(1 << PC0);
+	PCMSK1 |= (1 << PCINT8);
+	PCIFR   = (1 << PCIF1);
+	PCICR  |= (1 << PCIE1);
 }
 
-ISR(INT0_vect)
+/* fires on both edges; count the rising ones */
+ISR(PCINT1_vect)
 {
-	s_zc++;
+	if (PINC & (1 << PC0)) s_zc++;
 }
 
 /* One conversion finished. Store it, select the other channel for the next one.
@@ -92,7 +95,7 @@ void sampler_capture(uint16_t *v, uint16_t *i)
 
 uint16_t sampler_read_channel(uint8_t channel)
 {
-	ADMUX = (1 << REFS0) | (channel & 0x0F);
+	ADMUX = ADMUX_REF | (channel & 0x0F);
 	ADCSRA |= (1 << ADSC);
 	while (ADCSRA & (1 << ADSC)) { ; }
 	uint16_t r = ADC;

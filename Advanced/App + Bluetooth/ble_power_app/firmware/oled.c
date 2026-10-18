@@ -1,11 +1,13 @@
 /*
  * oled.c  -  see oled.h
  *
- * Software (bit-banged) I2C master. Lines are driven open-drain: a 0 is driven
- * low, a 1 is released and pulled up by the pull-up resistors on the OLED module
- * (almost every module has them; if yours doesn't, add 4.7k from SDA and SCL to
- * VCC). Only the DDR bit is toggled, one instruction per edge, so at 2 MHz the
- * clock runs at about 200 kHz, inside the SSD1306's 400 kHz limit.
+ * SMT board: the OLED header P4 is on the ATmega's hardware I2C (TWI0) pins,
+ * PC4 = SDA and PC5 = SCL, with pull-up resistors R14/R15 on the board.
+ *
+ * Clock:  SCL = F_CPU / (16 + 2 * TWBR)   (prescaler 1)
+ *   2 MHz,  TWBR = 2  -> 100 kHz   (normal mode: ~46 ms per frame, once a second)
+ *   16 MHz, TWBR = 12 -> 400 kHz   (DOOM turbo: ~12 ms per frame)
+ * Every wait has a timeout, so a missing or stuck display can never hang the meter.
  */
 
 #include <avr/io.h>
@@ -16,78 +18,81 @@
 #define OLED_ADDR 0x3C               /* 7-bit address; some modules use 0x3D */
 #endif
 
-#define SDA_BIT PB0
-#define SCL_BIT PB1
+/* ATmega328PB has two TWIs and names the first one TWBR0, TWCR0 ...; 328P has no suffix */
+#if defined(TWCR0)
+#define TW_BR TWBR0
+#define TW_SR TWSR0
+#define TW_CR TWCR0
+#define TW_DR TWDR0
+#else
+#define TW_BR TWBR
+#define TW_SR TWSR
+#define TW_CR TWCR
+#define TW_DR TWDR
+#endif
 
-/* open-drain helpers: PORTB bits stay 0, so output = low, input = released (high) */
-#define SDA_LOW()   (DDRB |=  (1 << SDA_BIT))
-#define SDA_HIGH()  (DDRB &= ~(1 << SDA_BIT))
-#define SCL_LOW()   (DDRB |=  (1 << SCL_BIT))
-#define SCL_HIGH()  (DDRB &= ~(1 << SCL_BIT))
-#define SDA_READ()  (PINB & (1 << SDA_BIT))
+#define TWBR_SLOW 2                  /* 100 kHz at 2 MHz  */
+#define TWBR_FAST 12                 /* 400 kHz at 16 MHz */
 
 static uint8_t present = 0;
-static uint8_t fast = 0;              /* CPU at 16 MHz (DOOM turbo): stretch the clock */
-
-/* I2C fast mode needs SCL high >= 0.6 us and low >= 1.3 us. At 2 MHz the code
- * itself is slow enough; at 16 MHz these pauses keep the clock near 400 kHz. */
-#define HOLD_HIGH() do { if (fast) __builtin_avr_delay_cycles(8);  } while (0)
-#define HOLD_LOW()  do { if (fast) __builtin_avr_delay_cycles(16); } while (0)
 
 void oled_set_fast(uint8_t on)
 {
-	fast = on;
+	TW_BR = on ? TWBR_FAST : TWBR_SLOW;
 }
 
-static void i2c_start(void)
+/* wait for the current TWI step; on timeout the bus is stuck, so stop using the
+ * display (otherwise every byte of every frame would wait for the timeout) */
+static uint8_t tw_wait(void)
 {
-	SDA_HIGH(); SCL_HIGH(); HOLD_LOW();
-	SDA_LOW();  HOLD_HIGH();
-	SCL_LOW();  HOLD_LOW();
+	for (uint16_t n = 0; n < 4000; n++) {
+		if (TW_CR & (1 << TWINT)) return 1;
+	}
+	present = 0;
+	return 0;
+}
+
+static uint8_t i2c_start(void)
+{
+	TW_CR = (1 << TWINT) | (1 << TWSTA) | (1 << TWEN);
+	if (!tw_wait()) return 0;
+	uint8_t st = TW_SR & 0xF8;
+	return st == 0x08 || st == 0x10;             /* START / repeated START sent */
 }
 
 static void i2c_stop(void)
 {
-	SDA_LOW();  HOLD_LOW();
-	SCL_HIGH(); HOLD_HIGH();
-	SDA_HIGH(); HOLD_LOW();
+	TW_CR = (1 << TWINT) | (1 << TWSTO) | (1 << TWEN);
+	for (uint16_t n = 0; n < 4000 && (TW_CR & (1 << TWSTO)); n++) { ; }
 }
 
 /* returns 1 if the device acknowledged */
 static uint8_t i2c_write(uint8_t b)
 {
-	for (uint8_t m = 0x80; m; m >>= 1) {
-		if (b & m) SDA_HIGH(); else SDA_LOW();
-		HOLD_LOW();
-		SCL_HIGH();
-		HOLD_HIGH();
-		SCL_LOW();
-	}
-	SDA_HIGH();                     /* release for ACK */
-	HOLD_LOW();
-	SCL_HIGH();
-	HOLD_HIGH();
-	uint8_t ack = !SDA_READ();
-	SCL_LOW();
-	return ack;
+	TW_DR = b;
+	TW_CR = (1 << TWINT) | (1 << TWEN);
+	if (!tw_wait()) return 0;
+	uint8_t st = TW_SR & 0xF8;
+	return st == 0x18 || st == 0x28;             /* SLA+W ACK / data ACK */
 }
 
 static void cmd_list(const uint8_t *c, uint8_t n)
 {
-	i2c_start();
+	if (!i2c_start()) { i2c_stop(); return; }
 	i2c_write(OLED_ADDR << 1);
-	i2c_write(0x00);                /* control byte: commands follow */
+	i2c_write(0x00);                             /* control byte: commands follow */
 	while (n--) i2c_write(*c++);
 	i2c_stop();
 }
 
 uint8_t oled_init(void)
 {
-	PORTB &= ~((1 << SDA_BIT) | (1 << SCL_BIT));   /* outputs drive low when enabled */
-	SDA_HIGH(); SCL_HIGH();
+	TW_SR = 0;                                   /* prescaler 1 */
+	TW_BR = TWBR_SLOW;
+	TW_CR = (1 << TWEN);
 
-	i2c_start();
-	present = i2c_write(OLED_ADDR << 1);
+	present = 1;
+	present = i2c_start() && i2c_write(OLED_ADDR << 1) && present;
 	i2c_stop();
 	if (!present) return 0;
 
@@ -97,7 +102,7 @@ uint8_t oled_init(void)
 		0xA8, 0x1F,       /* multiplex: 32 rows */
 		0xD3, 0x00,       /* no display offset */
 		0x40,             /* start line 0 */
-		0x8D, 0x14,       /* charge pump on (module runs from 5 V / 3.3 V) */
+		0x8D, 0x14,       /* charge pump on */
 		0x20, 0x01,       /* vertical addressing mode */
 		0xA1,             /* column 127 -> SEG0 (flip so it isn't mirrored) */
 		0xC8,             /* scan COM from the bottom (flip vertically) */
@@ -124,9 +129,9 @@ void oled_frame_begin(void)
 	if (!present) return;
 	static const uint8_t win[] = { 0x21, 0, OLED_W - 1, 0x22, 0, OLED_H / 8 - 1 };
 	cmd_list(win, sizeof win);
-	i2c_start();
+	if (!i2c_start()) return;
 	i2c_write(OLED_ADDR << 1);
-	i2c_write(0x40);                /* control byte: display data follows */
+	i2c_write(0x40);                             /* control byte: display data follows */
 }
 
 void oled_column(uint32_t rows)

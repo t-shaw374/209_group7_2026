@@ -53,7 +53,8 @@ static uint32_t to_milli(float x)
 static void send_status(void)
 {
 	const float lsb = ADC_VREF / 1024.0f;
-	uint16_t off = sampler_read_channel(2);          /* Offset, PC2 */
+	uint16_t off = sampler_read_channel(ADC_CH_OFFSET);   /* 2.1Vdc offset net, PE3/ADC7 */
+	uint16_t ipk = sampler_read_channel(ADC_CH_IPK);      /* current peak detector, PC3 */
 
 	ble_send_P(PSTR("S,fw=" FW_VERSION ",rate="));
 	ble_send_uint(settings.rate_ms);
@@ -69,6 +70,8 @@ static void send_status(void)
 	ble_send_fixed((uint32_t)mon.freq_dHz * 100UL, 1);
 	ble_send_P(PSTR(",offset="));
 	ble_send_fixed(to_milli(off * lsb), 3);
+	ble_send_P(PSTR(",ipk="));
+	ble_send_fixed(to_milli(ipk * lsb), 3);
 	if (mon.have_last) {
 		ble_send_P(PSTR(",vdc="));
 		ble_send_fixed(to_milli(mon.last.mean_v * lsb), 3);

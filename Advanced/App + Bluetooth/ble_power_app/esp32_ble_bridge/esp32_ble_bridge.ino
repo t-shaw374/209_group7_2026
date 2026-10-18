@@ -16,11 +16,13 @@
  * Build: Arduino IDE, board package "esp32" by Espressif (2.x or 3.x),
  *        uses the BLE library that ships with the board package.
  *
- * Wiring (see README.md):
- *   ESP32 GPIO MEGA_RX_PIN  <-  P1 pin 4 (ATmega TX via R8/R10 divider, ~3.2 V)
- *   ESP32 GPIO MEGA_TX_PIN  ->  P1 pin 3 (ATmega RX, PD0)
- *   ESP32 GND               --  P1 pin 2 (GND)
- *   ESP32 power: its OWN USB cable, NOT the board's 5 V (78L05 is 100 mA max).
+ * Wiring, SMT board header P5 (see README.md); the TXS0108E does the 3.3/5 V shifting:
+ *   P5-2  ESP_UART_RX -> GPIO MEGA_RX_PIN (16)     P5-3  ESP_UART_TX -> GPIO MEGA_TX_PIN (17)
+ *   P5-9  5Vdc        -> VIN / 5V  (ESP32 power from the board's 5 V LD1117)
+ *   P5-8  3.3VdcESP   -> 3V3       (ESP32's 3.3 V output powers the shifter's 3.3 V side)
+ *   P5-1/10 GND       -> GND
+ *   P5-4..7 (ATmega RESET/MOSI/MISO/SCK) -> GPIO 4/23/19/18, for SPI flashing later;
+ *   this sketch leaves those pins as inputs so it never resets the ATmega.
  */
 
 #include <BLEDevice.h>

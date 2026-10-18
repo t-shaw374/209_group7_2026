@@ -35,21 +35,35 @@ App → ATmega commands are listed under "Commands" below. Replies come back as 
 - Min/max ignore readings below `NO_LOAD_mW` (50 mW), so the minimum doesn't just read 0.00 W with nothing plugged in. They reset on `RESETMM` or an ATmega restart.
 - `t` is the ATmega's own time stamp (for example seconds since power-up). If `t` goes backwards, the app assumes a restart and clears the graph.
 
-## Wiring (ESP32 to P1)
+## Board: PCB_TEAM07_SMT
 
-| P1 pin | Signal | ESP32 |
-|---|---|---|
-| 1 | +5 V | **Do not connect.** See the power note below |
-| 2 | GND | GND |
-| 3 | ATmega RX (PD0) | GPIO 17 (`MEGA_TX_PIN`) |
-| 4 | ATmega TX through R8/R10 divider (≈3.2 V) | GPIO 16 (`MEGA_RX_PIN`) |
-| 5, 6 | not connected | – |
+This firmware targets the SMT board: a bare ATmega328PB with a 16 MHz crystal, a TXS0108E level shifter to the ESP32, an LM2596 → 7 V → LD1117 5 V / 3.3 V supply, and a 3.3 V ADC reference on AREF. (The earlier through-hole/Xplained Mini version is in older copies of this project.)
 
-**Power:** run the ESP32 from its own USB cable. An ESP32 using BLE draws roughly 80–130 mA with higher peaks. The L78L05 is rated for 100 mA and is already close to its thermal limit with the op-amps and display. Share GND only.
+### First power-up checklist
 
-The graph only needs pin 4 (ATmega → ESP32). Pin 3 is for sending commands later. If the Xplained Mini's USB serial link is also driving PD0, leave pin 3 unconnected until you need it.
+1. **Before fitting the ATmega or the ESP32**, power the board and check the rails: 7Vdc (TP5), 5Vdc (TP6), 3.3Vdc (TP7). Write the measured 3.3 V into `ADC_VREF` in `firmware/common.h`.
+2. **Set the fuses once** over the ISP header P1 (Atmel-ICE or the lab programmer, Microchip Studio → Device Programming → Fuses): external crystal 8–16 MHz with CKDIV8 ticked → **low fuse 0x7F**, F_CPU = 2 MHz as in the labs. A new chip runs at 1 MHz from its internal oscillator until you do this, and the UART and timing will all be wrong.
+3. Program the firmware over P1.
 
-Pin numbers apply to a classic ESP32 DevKit. For a C3 or S3, change `MEGA_RX_PIN` / `MEGA_TX_PIN` to any free GPIOs.
+### ESP32 on header P5
+
+| P5 pin | Net | ESP32 DevKit | |
+|---|---|---|---|
+| 1 | GND | GND | |
+| 2 | ESP_UART_RX | GPIO 16 (`MEGA_RX_PIN`) | ← ATmega TX (PD1) through the level shifter |
+| 3 | ESP_UART_TX | GPIO 17 (`MEGA_TX_PIN`) | → ATmega RX (PD0) |
+| 4 | ESP_RST_GPIO | GPIO 4 (suggested) | ATmega reset, for SPI flashing later |
+| 5 | ESP_MOSI | GPIO 23 | SPI flashing (later) |
+| 6 | ESP_MISO | GPIO 19 | SPI flashing (later) |
+| 7 | ESP_CLK | GPIO 18 | SPI flashing (later) |
+| 8 | 3.3VdcESP | 3V3 | the ESP32's own 3.3 V **output** powers the shifter's A side and enables it (OE) |
+| 9 | 5Vdc | VIN / 5V | **ESP32 power**, from the board's 5 V LD1117 (0.8 A) |
+| 10 | GND | GND | |
+
+- Don't power the ESP32 from the board's 3.3Vdc rail: that rail is the ADC reference (AREF) and the offset source, and the radio's current bursts would show up in every reading.
+- No divider is needed: the TXS0108E translates every line between 3.3 V and 5 V.
+- On a WROVER module GPIO 16/17 are used by its PSRAM; pick other pins and change the sketch.
+- Most DevKits have a diode between USB 5 V and VIN, so it is fine to plug in USB to flash it while on P5. If yours doesn't, unplug the P5 pin 9 wire while flashing.
 
 ## Running the app
 
@@ -65,23 +79,7 @@ Arduino IDE → Boards Manager → "esp32" by Espressif → select your board �
 
 ## Phase 2: flashing the ATmega over SPI (ISP), not built yet
 
-To keep the ESP32 free of calculations, the **app** would parse the `.hex` file and build the 4-byte ISP instructions. The ESP32 would only shift those bytes out over SPI and toggle RESET, using a second BLE characteristic so flashing never mixes with the data stream.
-
-| ATmega (Xplained Mini header) | ESP32 | Note |
-|---|---|---|
-| RST (U2 pin 6, not connected on the PCB) | any GPIO | Bodge wire. Held low during programming |
-| PB3 / MOSI | VSPI MOSI (GPIO 23) | 3.3 V into a 5 V input is OK (V_IH min = 3.0 V) |
-| PB5 / SCK | VSPI SCK (GPIO 18) | SCK ≤ F_CPU/4 = 500 kHz at 2 MHz. Use about 100 kHz |
-| PB4 / MISO | VSPI MISO (GPIO 19) | **Needs a divider** (e.g. 1.2k/2.2k like R8/R10). The ESP32 is not 5 V tolerant |
-| GND | GND | |
-
-PB3–PB5 aren't used on the PCB, so they're free.
-
-Before relying on it, check:
-
-- **debugWIRE:** if Microchip Studio debugging left the DWEN fuse set, ISP is disabled. Use "Disable debugWIRE and Close" first.
-- **Clock:** on the Xplained Mini the ATmega328PB is clocked from the on-board debugger chip by default. Make sure it still runs, and can be programmed, with that board's USB unplugged.
-- **Bus contention:** the on-board debugger also connects to RESET and the SPI pins, so don't have its USB connected while the ESP32 is flashing.
+The SMT board already has the wiring for this: P5 pins 4–7 carry the ATmega's RESET, MOSI, MISO and SCK through the TXS0108E, so no bodge wires or dividers are needed. To keep the ESP32 free of calculations, the **app** would parse the `.hex` file and build the 4-byte ISP instructions; the ESP32 would only shift those bytes out on SPI (VSPI: GPIO 23/19/18) and drive RESET (GPIO 4), on a second BLE characteristic so flashing never mixes with the data stream. SCK must stay below F_CPU/4 = 500 kHz at 2 MHz; about 100 kHz is safe.
 
 ## ATmega firmware (`firmware/`)
 
@@ -106,7 +104,8 @@ Built from the lab code in both repos. The table shows where each part came from
 - **Sampling:** Timer1 starts every conversion, one every 200 µs, alternating V, I, V, I. Because the timing is set by hardware, the display and UART interrupts can't make it jitter. Each channel gets exactly 5 samples per 500 Hz cycle. One window is 100 pairs (40 ms, 20 cycles), and each report averages 4 windows.
 - **Zero offset:** subtracted using the average of each window, so the ~2.04 V op-amp offset, and any drift in it, cancels out without calibration.
 - **Real power:** V and I are sampled 200 µs apart, so the voltage at each current sample is linearly interpolated, $v' = (v_k + v_{k+1})/2$. That shrinks a 500 Hz sine by $\cos(2\pi \cdot 500 \cdot 200\,\mu s) = \cos 36^\circ$, and the code divides that back out exactly.
-- **Scaling:** from the measured parts, $V_{meas}/V_{in} = 0.04321$ and $I_{meas}/I_{load} = 1.2986\ \text{V/A}$ (in `common.h`). The `CALV` and `CALI` commands trim these against a multimeter.
+- **Scaling:** computed in `common.h` from the resistor values in `LTspice_Simulation.asc` (divider 270k/15k, voltage difference amp, 0.5 Ω shunt, current gain 2.25, 1k/10n filters): $V_{vm}/V_{L} = 0.0695$ and $I_{vm}/I_{load} = 1.124\ \text{V/A}$. Change the `R_...` defines if the fitted parts differ; `CALV` and `CALI` trim the rest against a multimeter.
+- **Reference:** the ADC uses the external 3.3 V AREF (REFS = 00), as wired on the SMT board.
 - **PC test:** with simulated ADC samples across the whole spec (12.6–15.4 V, 2.5–7.5 VA, PF 0.6–1.0), the algorithm error is under 0.1% for V, I and P. With the frequency off by ±1% it stays under 0.25%. The real accuracy is set by the analogue circuit and calibration.
 
 ### Display
@@ -118,7 +117,7 @@ The right-hand digit shows the unit: `U` volts, `A` amps, `P` watts, `E` watt-ho
 | Command | What it does | Saved in EEPROM |
 |---|---|---|
 | `HELP` | Lists the commands | |
-| `STATUS` | Firmware version, rate, axis, calibration factors, measured frequency, Offset (PC2) voltage, DC levels of Vmeas/Imeas, VA | |
+| `STATUS` | Firmware version, rate, axis, calibration factors, measured frequency, offset voltage (ADC7), current peak (ADC3), DC levels of Vvm/Vim, VA | |
 | `RESET` | Energy total and time back to zero | |
 | `RESETMM` | Clears min/max power (also the app's "Reset min/max" button) | |
 | `RATE,500` | Report period in ms (250–10000) | yes |
@@ -141,26 +140,18 @@ Use a true-RMS meter that is rated for 500 Hz. Your meter read low at 500 Hz ear
 
 ### Building in Microchip Studio
 
-1. File → New → Project → GCC C Executable Project. Device: **ATmega328PB** (or 328P).
+1. File → New → Project → GCC C Executable Project. Device: **ATmega328PB**.
 2. Add every `.c` and `.h` file from `firmware/`.
 3. The project needs libm (`-lm`). It's on by default; check under Toolchain → Linker → Libraries if `sqrtf` won't link.
 4. Build and program. The size is about 10.5 KB flash and 1.1 KB RAM. It builds with no warnings on avr-gcc.
 
 Notes:
 - Programming can wipe the EEPROM unless the EESAVE fuse is set. If it does, run the calibration again.
-- The frequency reading counts rising edges on Vzc. If the comparator chatters (there's no hysteresis), `STATUS` will show more than 500 Hz. It's for information only and isn't used in the maths.
+- The frequency reading counts rising edges of the zero-crossing comparator on PC0 (VvmCZ, with hysteresis from R16/R17). It's for information only and isn't used in the maths.
 
 ## OLED (128 × 32, SSD1306 over I2C)
 
-| OLED pin | Connect to | Note |
-|---|---|---|
-| SDA | PB0 | Bodge wire. Unused on the PCB |
-| SCL | PB1 | Bodge wire. Unused on the PCB |
-| VCC | 5 V | The module has its own 3.3 V regulator |
-| GND | GND | |
-
-- The hardware I2C pins (PC4/PC5) are taken by the 7-segment shift register, so the OLED uses software I2C on PB0/PB1. PB3–PB5 stay free for SPI flashing.
-- **The OLED module's own pull-up resistors are needed.** Nearly all modules have them. If yours doesn't, add 4.7 kΩ from SDA and from SCL to VCC.
+The OLED plugs into header **P4**: SDA = PC4, SCL = PC5 (the ATmega's hardware I2C), 5 V and GND. The pull-ups R14/R15 are on the board. The bus runs at 100 kHz normally and 400 kHz in DOOM turbo, and every wait has a timeout, so a missing or stuck display can't hang the meter.
 - The firmware assumes the usual address, **0x3C**. Some modules use 0x3D: build with `-DOLED_ADDR=0x3D` or change it at the top of `oled.c`.
 - At start-up the firmware checks whether a display answers. If none does, everything else keeps working and `DOOM` replies `ERR,DOOM,no OLED found`.
 - **Normal mode:** the top line shows `3.41W 13.0V 0.264A`. Below it is the power graph, one column per reading (128 readings of history), scaled to the same axis as the app (`AXIS`). All of the graph's maths runs on the ATmega.
@@ -175,4 +166,4 @@ Send `DOOM` from the app. The app shows a control pad, and the keyboard works to
 - Measurement pauses while you play. The time spent playing is not counted as energy.
 - **Turning it off:** set `ENABLE_DOOM 0` in `common.h` for the assessed build. That removes about 9 KB of game code, and `DOOM` then replies `ERR,DOOM,disabled`.
 - **Input lag:** keys travel app → ESP32 → UART. With the ESP32's low-power Bluetooth settings, expect about 0.1–0.2 s of input lag.
-- **Assumption:** turbo assumes the ATmega's clock source is 16 MHz with CKDIV8, which is what gives the labs' 2 MHz. If DOOM mode runs at the wrong speed, set `DOOM_TURBO 0`.
+- Turbo relies on the 16 MHz crystal with the CKDIV8 fuse (low fuse 0x7F). If the fuses aren't set, DOOM mode will run at the wrong speed.

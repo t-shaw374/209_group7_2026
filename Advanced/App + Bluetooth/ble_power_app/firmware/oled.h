@@ -1,9 +1,8 @@
 /*
- * oled.h  -  128 x 32 SSD1306 OLED on software I2C
+ * oled.h  -  128 x 32 SSD1306 OLED on the hardware I2C pins (header P4)
  *
- * Wiring (bodge wires, these pins are unused on the PCB):
- *   OLED SDA -> PB0      OLED SCL -> PB1      OLED VCC -> 5 V      OLED GND -> GND
- * The hardware I2C pins (PC4/PC5) are taken by the 7-segment shift register.
+ * P4: SDA = PC4 (TWISDA), SCL = PC5 (TWISCL), 5 V, GND. Pull-ups R14/R15 are on
+ * the board.
  *
  * Frames are sent column by column (vertical addressing): for each of the 128
  * columns, 4 bytes, top page first; bit 0 of each byte is the top row of that page.

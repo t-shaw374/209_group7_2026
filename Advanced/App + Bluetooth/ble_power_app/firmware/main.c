@@ -2,16 +2,21 @@
  * main.c  -  COMPSYS209 Team 07 energy monitor
  *
  * Built from the lab code in taye752/209-Labs and t-shaw374/compsys209_labs:
- *   Lab 4  ADC (AVCC ref, 125 kHz ADC clock)  -> sampler.c (now Timer1-triggered)
+ *   Lab 4  ADC (125 kHz ADC clock)            -> sampler.c (Timer1-triggered, 3.3 V AREF)
  *   Lab 4  UART at 9600 baud                  -> UART.c (unchanged)
- *   Lab 5  zero-crossing on INT0 (PD2)        -> sampler.c (frequency)
+ *   Lab 5  zero-crossing timing               -> sampler.c (frequency, now on PC0)
  *   Lab 6  7-segment display + Timer0         -> display.c (+ unit letters, tick)
  * plus a 128 x 32 OLED power graph (oled.c, oled_graph.c) and DOOM mode (doom*.c),
  * plus BLE reporting (ble_report.c), app commands (ble_cmd.c, commands.c) and
  * EEPROM calibration (settings.c).
  *
- * Pins (PCB netlist): PC0 Vmeas, PC1 Imeas, PC2 Offset, PD2 Vzc, PD0/PD1 UART,
- * PC3 SH_CP, PC4 SH_DS, PC5 SH_ST, PD4-PD7 digit enables DS1-DS4.
+ * Pins (PCB_TEAM07_SMT netlist):
+ *   ADC   PC1 Vvm (voltage), PC2 Vim (current), PC3 Vipk, PE3 offset, AREF = 3.3 V
+ *   PC0   VvmCZ zero-crossing comparator (pin-change interrupt)
+ *   UART  PD0 RX / PD1 TX -> TXS0108E level shifter -> ESP32 (header P5)
+ *   7-seg PB0 SH_CP, PB1 SH_ST, PB2 SH_DS, PD7..PD4 digits DS1..DS4, PD3 OE (header P6)
+ *   OLED  PC4 SDA / PC5 SCL, hardware TWI (header P4)
+ *   ISP   PB3 MOSI, PB4 MISO, PB5 SCK, PC6 RESET (header P1, also reachable by the ESP32)
  *
  * Every report period (default 1 s):
  *   1. capture WINDOWS x N_PAIRS sample pairs (160 ms, a whole number of cycles)
