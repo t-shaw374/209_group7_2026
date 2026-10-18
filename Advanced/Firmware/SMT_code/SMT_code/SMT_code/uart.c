@@ -1,35 +1,40 @@
-/*
- * uart.c
- *
- * Created: 17/10/2026 8:11:29 pm
- *  Author: tsha374
- */ 
-
 #include <avr/io.h>
 #include "uart.h"
 
-void usart_init(uint16_t ubrr) {
-	UCSR0B = (1 << TXEN0);
-	UCSR0C = (1 << UCSZ01 | 1 << UCSZ00);
-	UBRR0L = (uint8_t)(ubrr);
-	UBRR0H = (uint8_t)(ubrr >> 8);
+#define UBRR_VAL  ((F_CPU + 8UL * UART_BAUD) / (16UL * UART_BAUD) - 1)
+
+void uart_init(void)
+{
+	UBRR0H = (uint8_t)(UBRR_VAL >> 8);
+	UBRR0L = (uint8_t)UBRR_VAL;
+	UCSR0B = (1 << TXEN0);                      // transmitter only
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);     // 8 data bits, no parity, 1 stop
 }
 
-void usart_transmit(uint8_t data) {
-	while (!(UCSR0A & (1 << UDRE0))) {}
-	UDR0 = data;
-	
+void uart_putc(char c)
+{
+	while (!(UCSR0A & (1 << UDRE0))) ;          // wait for empty data register
+	UDR0 = c;
 }
 
-void uart_tx_string(const char *s) {
+void uart_puts(const char *s)
+{
 	while (*s) {
-		usart_transmit(*s++);
+		uart_putc(*s++);
 	}
 }
 
-void send_mV_value(uint16_t num) {
-	uint8_t num_chars[] = {(num / 1000) % 10, (num / 100) % 10, (num / 10) % 10, num % 10};
-	for(uint8_t i = 0; i < 4; i++) {
-		usart_transmit(num_chars[i] + 48);
+void uart_put_u16(uint16_t v)
+{
+	char tmp[5];
+	uint8_t i = 0;
+
+	do {
+		tmp[i++] = '0' + (v % 10);
+		v /= 10;
+	} while (v);
+
+	while (i) {
+		uart_putc(tmp[--i]);
 	}
 }

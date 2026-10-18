@@ -46,14 +46,14 @@ void init_display(uint8_t brightness)
 	TCCR2B = (1 << CS20);
 	OCR2B  = brightness;
 
-	// Timer0: CTC, ~977 Hz digit scan
-	TCCR0A = (1 << WGM01);
-	TCCR0B = (1 << CS02);
-	OCR0A  = 7;
-	TIMSK0 = (1 << OCIE0A);
+	// Timer3: CTC, ~977 Hz digit scan
+	TCCR3A = 0;                                  // normal port operation, WGM31:30 = 0
+	TCCR3B = (1 << WGM32) | (1 << CS32);         // CTC mode (TOP = OCR3A), prescaler 256
+	OCR3A  = 7;
+	TIMSK3 = (1 << OCIE3A);
 }
 
-ISR(TIMER0_COMPA_vect)
+ISR(TIMER3_COMPA_vect)
 {
 	send_next_character_to_display();
 }
@@ -106,11 +106,12 @@ void send_next_character_to_display(void)
 // so the scan ISR can't disturb sample timing)
 void display_pause(void)
 {
-	TIMSK0 &= ~(1 << OCIE0A);     // stop the scan interrupt
+	TIMSK3 &= ~(1 << OCIE3A);     // stop the scan interrupt
 	PORTD  |= DS_MASK;            // all digits off, so one digit doesn't stay lit bright
 }
 
 void display_resume(void)
 {
-	TIMSK0 |= (1 << OCIE0A);
+	TIFR3  = (1 << OCF3A);        // drop any match that happened while paused
+	TIMSK3 |= (1 << OCIE3A);
 }

@@ -1,19 +1,17 @@
-/*
- * uart.h
- *
- * Created: 17/10/2026 8:11:40 pm
- *  Author: tsha374
- */ 
+#ifndef UART_H
+#define UART_H
+
 #include <stdint.h>
 
-#ifndef UART_H_
-#define UART_H_
+#ifndef F_CPU
+#define F_CPU 2000000UL
+#endif
 
-void usart_init(uint16_t ubrr);
-void usart_transmit(uint8_t data);
-void send_mV_value(uint16_t num);
-void uart_tx_string(const char *s);
+#define UART_BAUD 9600UL     // 2 MHz: UBRR = 12, 0.16 % error
 
+void uart_init(void);                 // TX only, 8N1
+void uart_putc(char c);               // blocking
+void uart_puts(const char *s);        // blocking, null-terminated string
+void uart_put_u16(uint16_t v);        // value as decimal text (no newline)
 
-
-#endif /* UART_H_ */
+#endif

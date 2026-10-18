@@ -20,6 +20,15 @@
 // This file has zero .data/.bss footprint: every command byte below
 // lives in flash as an immediate, not in a RAM table.
 
+
+uint8_t sh1106_probe(void)
+{
+	uint8_t status = i2c_start((SH1106_ADDR << 1) | 0);
+	i2c_stop();                       // always release the bus, even on failure
+	return (status == 0x18);          // 0x18 = SLA+W transmitted, ACK received
+}
+
+
 void sh1106_command(uint8_t cmd)
 {
 	i2c_start((SH1106_ADDR << 1) | 0);

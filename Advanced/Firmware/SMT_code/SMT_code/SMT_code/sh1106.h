@@ -27,6 +27,8 @@ void sh1106_set_page(uint8_t page);
 // starting at the controller's current column (0 after sh1106_set_page).
 void sh1106_write_page_data(const uint8_t *data, uint8_t len);
 
+// Returns 1 if the display ACKs its address, 0 if not.
+uint8_t sh1106_probe(void);
 
 
 #endif /* SH1106_H_ */
