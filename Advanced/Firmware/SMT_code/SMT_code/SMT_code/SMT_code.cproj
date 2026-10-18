@@ -133,6 +133,12 @@
     </ToolchainSettings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="calc.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="calc.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="convert.c">
       <SubType>compile</SubType>
     </Compile>
