@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Power Monitor</title>
+<!--
+  COMPSYS209 Team 07 - BLE power monitor app (Web Bluetooth).
+
+  This page does no measurement maths. It receives lines computed and formatted
+  by the ATmega (forwarded unchanged by the ESP32 bridge) and draws them:
+     A,<min>,<max>,<unit>          axis chosen by the ATmega
+     D,<t>,<Vrms>,<Irms>,<P>,<PF>  one reading
+  The only arithmetic here is placing received values onto screen pixels.
+
+  Open in Chrome or Edge (desktop or Android). Needs a secure origin:
+  https:// (e.g. GitHub Pages) or http://localhost. iPhone: use the Bluefy browser.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1b1f24;
+    --muted: #5d6673;
+    --line: #e1e5ea;
+    --accent: #0b6bcb;
+    --accent-ink: #ffffff;
+    --plot: #0b6bcb;
+    --plot-fill: rgba(11, 107, 203, 0.10);
+    --ok: #1a7f37;
+    --warn: #b35900;
+    --bad: #c62828;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216;
+      --panel: #171b21;
+      --ink: #e8ebef;
+      --muted: #98a2ae;
+      --line: #2a3038;
+      --accent: #4c9be8;
+      --accent-ink: #0f1216;
+      --plot: #5aa8f0;
+      --plot-fill: rgba(90, 168, 240, 0.14);
+      --ok: #4ac26b;
+      --warn: #e3a04f;
+      --bad: #ef6b6b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1216; --panel: #171b21; --ink: #e8ebef; --muted: #98a2ae; --line: #2a3038;
+    --accent: #4c9be8; --accent-ink: #0f1216; --plot: #5aa8f0; --plot-fill: rgba(90,168,240,0.14);
+    --ok: #4ac26b; --warn: #e3a04f; --bad: #ef6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+
+  .tiles {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 14px;
+  }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font: 600 26px/1.2 var(--mono); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .unit { font-size: 14px; color: var(--muted); margin-left: 4px; font-family: system-ui, sans-serif; font-weight: 500; }
+  .tile.main .value { color: var(--plot); }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; }
+  .panel h2 span { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .chart-wrap { position: relative; height: 300px; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; text-align: center; padding: 0 20px;
+  }
+  .row { display: flex; gap: 8px; }
+  input[type=text] {
+    flex: 1; min-width: 0; font: 14px var(--mono);
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink);
+  }
+  pre#log {
+    margin: 10px 0 0; max-height: 180px; overflow: auto;
+    font: 12px/1.5 var(--mono); color: var(--muted);
+    background: var(--bg); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all;
+  }
+  .note { font-size: 13px; color: var(--muted); }
+  .warnbox {
+    display: none; border: 1px solid var(--warn); color: var(--ink);
+    background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Power Monitor</h1>
+      <div class="sub">Team 07 &middot; values computed on the ATmega, relayed by ESP32 over BLE</div>
+    </div>
+    <div class="controls">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="demoBtn" title="Feeds fake ATmega lines through the same parser">Demo</button>
+      <button id="clearBtn">Clear</button>
+      <button id="csvBtn" title="Save every received line">Save CSV</button>
+    </div>
+  </header>
+
+  <div id="unsupported" class="warnbox">
+    This browser has no Web Bluetooth. Use Chrome or Edge on a laptop or Android phone
+    (or Bluefy on iPhone), opened from <b>https://</b> or <b>http://localhost</b>.
+  </div>
+
+  <div class="status" style="margin-bottom:14px"><span id="dot" class="dot"></span><span id="statusText">Not connected</span></div>
+
+  <section class="tiles">
+    <div class="tile main"><div class="label">Real power</div><div class="value"><span id="vP">&ndash;</span><span class="unit">W</span></div></div>
+    <div class="tile"><div class="label">Voltage RMS</div><div class="value"><span id="vV">&ndash;</span><span class="unit">V</span></div></div>
+    <div class="tile"><div class="label">Current RMS</div><div class="value"><span id="vI">&ndash;</span><span class="unit">A</span></div></div>
+    <div class="tile"><div class="label">Power factor</div><div class="value"><span id="vPF">&ndash;</span></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Power draw <span id="axisInfo">axis: waiting for ATmega</span></h2>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div id="empty" class="empty">Connect to the board, or press Demo to try the page without hardware.</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Send to ATmega <span>bytes pass through the ESP32 unchanged</span></h2>
+    <div class="row">
+      <input id="sendText" type="text" placeholder="e.g. a command your ATmega firmware understands" autocomplete="off">
+      <button id="sendBtn" disabled>Send</button>
+    </div>
+    <pre id="log"></pre>
+  </section>
+
+  <p class="note">
+    Protocol: <code>A,min,max,unit</code> sets the graph axis &middot;
+    <code>D,t,Vrms,Irms,P,PF</code> is one reading. Unknown lines are shown in the log and ignored.
+  </p>
+</main>
+
+<script>
+(() => {
+  const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+  const NUS_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // app -> ESP32 (write)
+  const NUS_TX      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 -> app (notify)
+  const MAX_POINTS  = 120;   // how many readings stay on screen
+  const MAX_LOG     = 60;
+
+  const $ = id => document.getElementById(id);
+  const ui = {
+    connect: $('connectBtn'), demo: $('demoBtn'), clear: $('clearBtn'), csv: $('csvBtn'),
+    send: $('sendBtn'), sendText: $('sendText'), log: $('log'),
+    dot: $('dot'), status: $('statusText'), empty: $('empty'), axisInfo: $('axisInfo'),
+    vP: $('vP'), vV: $('vV'), vI: $('vI'), vPF: $('vPF'), canvas: $('chart'),
+  };
+
+  const state = {
+    device: null, rxChar: null,
+    axis: null,                 // {min, max, minText, maxText, unit} from the ATmega
+    points: [],                 // [{t, tText, p}]
+    rawLines: [],               // everything received, for CSV
+    logLines: [],
+    partial: '',                // reassembles lines split across BLE packets
+    demoTimer: null,
+  };
+
+  if (!navigator.bluetooth) {
+    $('unsupported').style.display = 'block';
+    ui.connect.disabled = true;
+  }
+
+  // ---------- status / log ----------
+  function setStatus(text, kind) {
+    ui.status.textContent = text;
+    ui.dot.className = 'dot' + (kind ? ' ' + kind : '');
+  }
+  function log(line) {
+    state.logLines.push(line);
+    if (state.logLines.length > MAX_LOG) state.logLines.shift();
+    ui.log.textContent = state.logLines.join('\n');
+    ui.log.scrollTop = ui.log.scrollHeight;
+  }
+
+  // ---------- line parsing (no maths: values are shown as received) ----------
+  function feedText(text) {
+    state.partial += text;
+    let nl;
+    while ((nl = state.partial.indexOf('\n')) >= 0) {
+      const line = state.partial.slice(0, nl).replace(/\r$/, '').trim();
+      state.partial = state.partial.slice(nl + 1);
+      if (line) handleLine(line);
+    }
+    if (state.partial.length > 256) state.partial = '';   // garbage guard
+  }
+
+  function handleLine(line) {
+    log('← ' + line);
+    const f = line.split(',');
+    if (f[0] === 'A' && f.length >= 3) {
+      const min = parseFloat(f[1]), max = parseFloat(f[2]);
+      if (isFinite(min) && isFinite(max) && max > min) {
+        state.axis = { min, max, minText: f[1], maxText: f[2], unit: f[3] || '' };
+        ui.axisInfo.textContent = `axis ${f[1]}–${f[2]} ${state.axis.unit} (set by ATmega)`;
+        draw();
+      }
+      state.rawLines.push(line);
+    } else if (f[0] === 'D' && f.length >= 5) {
+      const t = parseFloat(f[1]), p = parseFloat(f[4]);
+      if (!isFinite(t) || !isFinite(p)) return;
+      const last = state.points[state.points.length - 1];
+      if (last && t < last.t) state.points = [];         // ATmega restarted
+      state.points.push({ t, tText: f[1], p });
+      if (state.points.length > MAX_POINTS) state.points.shift();
+      ui.vV.textContent = f[2];
+      ui.vI.textContent = f[3];
+      ui.vP.textContent = f[4];
+      ui.vPF.textContent = f[5] !== undefined ? f[5] : '–';
+      state.rawLines.push(line);
+      draw();
+    }
+  }
+
+  // ---------- chart ----------
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function draw() {
+    const c = ui.canvas, dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+
+    ui.empty.style.display = state.points.length ? 'none' : 'flex';
+    if (!state.points.length) return;
+
+    const axis = state.axis || { min: 0, max: 10, minText: '0', maxText: '10', unit: 'W' };
+    if (!state.axis) ui.axisInfo.textContent = 'axis: default 0–10 W (ATmega has not sent A,...)';
+
+    const padL = 52, padR = 12, padT = 10, padB = 26;
+    const pw = w - padL - padR, ph = h - padT - padB;
+    const pts = state.points;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const xOf = t => padL + (t1 === t0 ? pw : (t - t0) / (t1 - t0) * pw);
+    const yOf = v => {
+      const clamped = Math.min(axis.max, Math.max(axis.min, v));
+      return padT + ph - (clamped - axis.min) / (axis.max - axis.min) * ph;
+    };
+
+    // grid (no computed tick values: only the ATmega's min/max are labelled)
+    g.strokeStyle = css('--line'); g.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      const y = Math.round(padT + ph * k / 4) + 0.5;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+    }
+    g.fillStyle = css('--muted'); g.font = '12px ' + css('--mono');
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(axis.maxText + ' ' + axis.unit, padL - 6, padT + 1);
+    g.fillText(axis.minText + ' ' + axis.unit, padL - 6, padT + ph);
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillText('t=' + pts[0].tText, padL, padT + ph + 8);
+    g.textAlign = 'right';
+    g.fillText('t=' + pts[pts.length - 1].tText, padL + pw, padT + ph + 8);
+
+    // area + line
+    const color = css('--plot');
+    g.beginPath();
+    pts.forEach((pt, i) => i ? g.lineTo(xOf(pt.t), yOf(pt.p)) : g.moveTo(xOf(pt.t), yOf(pt.p)));
+    g.lineTo(xOf(t1), padT + ph); g.lineTo(xOf(t0), padT + ph); g.closePath();
+    g.fillStyle = css('--plot-fill'); g.fill();
+
+    g.beginPath();
+    pts.forEach((pt, i) => i ? g.lineTo(xOf(pt.t), yOf(pt.p)) : g.moveTo(xOf(pt.t), yOf(pt.p)));
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+
+    const lp = pts[pts.length - 1];
+    g.beginPath(); g.arc(xOf(lp.t), yOf(lp.p), 4, 0, Math.PI * 2);
+    g.fillStyle = color; g.fill();
+    g.strokeStyle = css('--panel'); g.lineWidth = 2; g.stroke();
+  }
+  window.addEventListener('resize', draw);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+
+  // ---------- Bluetooth ----------
+  async function connect() {
+    stopDemo();
+    try {
+      setStatus('Choose the board in the browser pop-up…', 'warn');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [NUS_SERVICE] }],
+      });
+      state.device = device;
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+      setStatus('Connecting to ' + (device.name || 'device') + '…', 'warn');
+      const server  = await device.gatt.connect();
+      const service = await server.getPrimaryService(NUS_SERVICE);
+      const tx = await service.getCharacteristic(NUS_TX);
+      state.rxChar = await service.getCharacteristic(NUS_RX);
+      const decoder = new TextDecoder();
+      tx.addEventListener('characteristicvaluechanged', e =>
+        feedText(decoder.decode(e.target.value, { stream: true })));
+      await tx.startNotifications();
+      setStatus('Connected to ' + (device.name || 'device'), 'ok');
+      ui.connect.textContent = 'Disconnect';
+      ui.send.disabled = false;
+    } catch (err) {
+      setStatus(err.name === 'NotFoundError' ? 'No device chosen' : 'Error: ' + err.message, 'bad');
+    }
+  }
+  function onDisconnected() {
+    setStatus('Disconnected', 'bad');
+    ui.connect.textContent = 'Connect';
+    ui.send.disabled = true;
+    state.rxChar = null;
+  }
+  ui.connect.addEventListener('click', () => {
+    if (state.device && state.device.gatt.connected) state.device.gatt.disconnect();
+    else connect();
+  });
+
+  async function sendLine() {
+    const text = ui.sendText.value;
+    if (!text || !state.rxChar) return;
+    const bytes = new TextEncoder().encode(text + '\n');
+    try {
+      for (let i = 0; i < bytes.length; i += 20) {        // 20-byte BLE packets
+        await state.rxChar.writeValue(bytes.slice(i, i + 20));
+      }
+      log('→ ' + text);
+      ui.sendText.value = '';
+    } catch (err) { log('send failed: ' + err.message); }
+  }
+  ui.send.addEventListener('click', sendLine);
+  ui.sendText.addEventListener('keydown', e => { if (e.key === 'Enter') sendLine(); });
+
+  // ---------- demo: fake ATmega output, split into 20-byte "packets" ----------
+  function stopDemo() {
+    if (state.demoTimer) { clearInterval(state.demoTimer); state.demoTimer = null; }
+    ui.demo.textContent = 'Demo';
+  }
+  ui.demo.addEventListener('click', () => {
+    if (state.demoTimer) { stopDemo(); setStatus('Demo stopped'); return; }
+    let t = 0;
+    setStatus('Demo: fake data, not from the board', 'warn');
+    ui.demo.textContent = 'Stop demo';
+    const tick = () => {
+      // Pre-formatted strings, exactly like the ATmega's ble_report.c output.
+      const mW = 4000 + Math.round(2500 * Math.sin(t / 9)) + Math.round(Math.random() * 300);
+      let out = '';
+      if (t % 10 === 0) out += 'A,0.00,8.00,W\n';
+      out += `D,${t},12.98,0.${String(Math.round(mW / 13)).padStart(3, '0')},${(mW / 1000).toFixed(2)},0.99\n`;
+      for (let i = 0; i < out.length; i += 20) feedText(out.slice(i, i + 20));
+      t++;
+    };
+    tick();
+    state.demoTimer = setInterval(tick, 500);
+  });
+
+  ui.clear.addEventListener('click', () => {
+    state.points = []; state.rawLines = []; state.logLines = [];
+    ui.log.textContent = '';
+    ['vP', 'vV', 'vI', 'vPF'].forEach(k => ui[k].textContent = '–');
+    draw();
+  });
+
+  ui.csv.addEventListener('click', () => {
+    const blob = new Blob([state.rawLines.join('\n') + '\n'], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'power_log.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  draw();
+})();
+</script>
+</body>
+</html>
