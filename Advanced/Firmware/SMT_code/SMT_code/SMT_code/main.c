@@ -9,6 +9,7 @@
 #include "adc.h"
 #include "segdisplay.h"
 #include "uart.h"
+#include "timeout.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -60,7 +61,7 @@ static void state_machine_run(void)
 		case STATE_INIT:
 		init_display(128);
 		i2c_init();
-		
+		timeout_init();
 		
 		oled_ok = sh1106_probe();
 		if (oled_ok) sh1106_init();
@@ -80,10 +81,10 @@ static void state_machine_run(void)
 
 		case STATE_ADC:
 		display_pause();
-		adc_capture();  
-		display_resume();                     
-		
-		SET_STATE(STATE_CALC);
+		ok = adc_capture();
+		display_resume();
+
+		SET_STATE(ok ? STATE_CALC : STATE_ERROR);
 		break;
 
 		case STATE_CALC:

@@ -172,6 +172,12 @@
     <Compile Include="sh1106.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="timeout.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="timeout.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="uart.c">
       <SubType>compile</SubType>
     </Compile>

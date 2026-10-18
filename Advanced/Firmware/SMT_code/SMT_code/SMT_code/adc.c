@@ -28,11 +28,13 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include "adc.h"
+#include "timeout.h"
 
 #define T_FIRST       8      // timer ticks from start to the first trigger at offset 0
 #define T_SAMPLE_MIN  220    // shortest allowed sample spacing (104 us conversion + margin)
 #define T_SAMPLE_MAX  455    // longest the period measurement can deliver (~3.6 ms / 16)
 #define CAPTURES      (2 * ADC_OFFSETS)
+#define CAPTURE_TIMEOUT_MS  125   // capture takes ~50 ms at 500 Hz, ~98 ms at 275 Hz
 
 // WGM12 (CTC mode bit) lives in TCCR1B together with the clock select bits,
 // so stopping the timer must keep WGM12 set. Never write TCCR1B = 0.
@@ -255,7 +257,15 @@ uint8_t adc_capture(void)
 	wp        = &adc_buf[0][0];
 	done      = 0;
 	running   = 1;                               // from here the edge ISR starts captures
-	while (!done) ;
+	timeout_start(CAPTURE_TIMEOUT_MS);
+	while (!done) {
+		if (timeout_expired()) {
+			running = 0;                         // edge ISR stops starting captures
+			TCCR1B  = T1_STOPPED;                // stop the sample timer
+			return 0;
+		}
+	}
+	timeout_stop();
 	return 1;
 }
 

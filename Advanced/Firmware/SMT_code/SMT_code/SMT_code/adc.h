@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define ADC_OFFSETS    20   // phase offsets per sample interval
+#define ADC_OFFSETS    10   // phase offsets per sample interval
 #define ADC_SAMPLES    16   // samples per capture (one period), always exactly this many
 #define ADC_POINTS     (ADC_SAMPLES * ADC_OFFSETS)   // 160
 #define ADC_PER_COUNT  8    // periods averaged by adc_measure_period()
