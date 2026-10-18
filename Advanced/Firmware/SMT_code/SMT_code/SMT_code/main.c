@@ -90,10 +90,11 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_UART:
+		
 		//one line per instant: voltage,current  (CR+LF), blank line after the set
 		for (uint8_t i = 0; i < ADC_POINTS; i++) {
 			uart_put_u16(adc_buf[ADC_VOLT][i]);
-			uart_putc(',');
+			uart_putc(' ');
 			uart_put_u16(adc_buf[ADC_CURR][i]);
 			uart_puts("\r\n");
 		}

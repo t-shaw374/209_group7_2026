@@ -99,7 +99,7 @@ ISR(ADC_vect, ISR_NOBLOCK)
 
 void adc_init(void)
 {
-	// ADC: AVcc reference, prescaler 16 -> 125 kHz,
+	// ADC: Aref reference, prescaler 16 -> 125 kHz,
 	// auto-trigger on Timer0 compare match A
 	ADMUX  = (0);
 	adc_set_channel(ADC_CH_V);
