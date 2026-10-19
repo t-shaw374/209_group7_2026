@@ -66,6 +66,33 @@ static void results_line(const calc_result_t *r, char *p)
 	*p = '\0';
 }
 
+// Send all 160 points, one line per instant: "voltage current"
+// raw = 1: ADC counts (call BEFORE convert_to_real)
+// raw = 0: mV and mA  (call AFTER convert_to_real)
+//static void uart_dump_buffer(uint8_t raw)
+//{
+	//char line[16];
+//
+	//uart_puts(raw ? "--- raw counts ---\r\n" : "--- mV mA ---\r\n");
+	//for (uint8_t k = 0; k < ADC_POINTS; k++) {
+		//char *p = line;
+		//if (raw) {
+			//p = fmt_int(p, adc_buf[ADC_VOLT][k]);
+			//*p++ = ' ';
+			//p = fmt_int(p, adc_buf[ADC_CURR][k]);
+			//} else {
+			//p = fmt_int(p, REAL_MV[k]);
+			//*p++ = ' ';
+			//p = fmt_int(p, REAL_MA[k]);
+		//}
+		//*p++ = '\r';
+		//*p++ = '\n';
+		//*p = '\0';
+		//uart_puts(line);
+	//}
+	//uart_puts("\r\n");
+//}
+
 
 static void state_machine_run(void)
 {
