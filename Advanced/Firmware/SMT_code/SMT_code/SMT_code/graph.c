@@ -3,7 +3,7 @@
  *
  * Created: 14/10/2026 12:26:31 pm
  *  Author: tsha374
- */ 
+ */
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 
@@ -11,34 +11,27 @@
 #include "i2c.h"
 #include "sh1106.h"
 #include "font_chars.h"
+#include "convert.h"
+#include "format.h"
 
 #define CHAR_WIDTH 6   // 5 pixel-columns of glyph + 1 pixel spacing
 
 // ---------------------------------------------------------------------
-// Layout
+// Layout (64 rows = 8 pages of 8 rows)
+//   page 0      : title and peak value
+//   pages 1..6  : graph, rows 8..55
+//   page 7      : values line
 // ---------------------------------------------------------------------
-#define AXIS_X        16   // column where the vertical (Y) axis is drawn
-#define AXIS_Y_ROW    55   // pixel row where the horizontal (X) axis sits
-#define AXIS_Y_PAGE   (AXIS_Y_ROW / 8)          // = 6
-#define AXIS_Y_BIT    (1 << (AXIS_Y_ROW % 8))   // = 0x80
+#define AXIS_X        16                         // column of the vertical axis
+#define PLOT_X0       (AXIS_X + 2)               // first graph column
+#define PLOT_WIDTH    (SCREEN_WIDTH - PLOT_X0)   // 110 columns
+#define PLOT_PAGE_TOP 1
+#define PLOT_PAGE_BOT 6
+#define ZERO_ROW      31                         // pixel row of the zero line
+#define HALF_HEIGHT   22                         // +peak -> row 9, -peak -> row 53
 
 // ---------------------------------------------------------------------
-// Demo data: 22 sample points, y given directly in pixel rows (0..54,
-// 0 = top of screen, 54 = just above the x-axis). Stored in flash only.
-// Replace this with your own values if driving the graph from real data.
-// ---------------------------------------------------------------------
-#define NUM_POINTS     10                                  // change this
-#define PLOT_X0        (AXIS_X + 2)
-#define PLOT_WIDTH     (SCREEN_WIDTH - PLOT_X0)            // 110 columns
-#define POINT_SPACING  (PLOT_WIDTH / NUM_POINTS)           // 22 pts -> 5 px
-
-static const uint8_t demo_data[NUM_POINTS] PROGMEM = {
-	50, 45, 38, 30, 22, 15, 10,  8, 10, 15
-};
-// ---------------------------------------------------------------------
-// Draw a string into a page buffer. Characters whose full 7-row glyph
-// doesn't fit within a single page will look clipped -- keep labels on
-// pages where that's acceptable (true here for all labels used below).
+// Draw a string into a page buffer.
 // ---------------------------------------------------------------------
 static void draw_string(uint8_t *buf, uint8_t x, const char *str)
 {
@@ -54,52 +47,99 @@ static void draw_string(uint8_t *buf, uint8_t x, const char *str)
 	}
 }
 
-void graph_render(const char *str)
+// One point of the selected waveform, in mV, mA or mW
+static int32_t sample(graph_mode_t mode, uint16_t k)
 {
-	uint8_t buf[SCREEN_WIDTH]; // only RAM this uses: 128 bytes, one page at a time
-	
+	switch (mode) {
+		case GRAPH_VOLTAGE: return REAL_MV[k];
+		case GRAPH_CURRENT: return REAL_MA[k];
+		default:            return ((int32_t)REAL_MV[k] * REAL_MA[k]) / 1000;  // uW -> mW
+	}
+}
+
+void graph_render(graph_mode_t mode, const char *values)
+{
+	static const char t_power[]   PROGMEM = "POWER";
+	static const char t_voltage[] PROGMEM = "VOLTAGE";
+	static const char t_current[] PROGMEM = "CURRENT";
+
+	const char *title_p;
+	char unit;
+	switch (mode) {
+		case GRAPH_VOLTAGE: title_p = t_voltage; unit = 'V'; break;
+		case GRAPH_CURRENT: title_p = t_current; unit = 'A'; break;
+		default:            title_p = t_power;   unit = 'W'; break;
+	}
+	char title[8];
+	strcpy_P(title, title_p);
+
+	// ---- Peak, used to scale the graph to fill its height ----
+	int32_t peak = 1;                            // never 0, it's a divisor
+	for (uint16_t k = 0; k < ADC_POINTS; k++) {
+		int32_t s = sample(mode, k);
+		if (s < 0) s = -s;
+		if (s > peak) peak = s;
+	}
+
+	char pk[10];
+	char *e = fmt_milli(pk, peak, unit);
+	*e = '\0';
+	uint8_t pk_x = SCREEN_WIDTH - (uint8_t)(e - pk) * CHAR_WIDTH;
+
+	// ---- Pixel row for every graph column (160 points -> 110 columns) ----
+	uint8_t ycol[PLOT_WIDTH];
+	for (uint8_t c = 0; c < PLOT_WIDTH; c++) {
+		uint16_t k = ((uint16_t)c * ADC_POINTS + PLOT_WIDTH / 2) / PLOT_WIDTH;
+		if (k >= ADC_POINTS) k = ADC_POINTS - 1;
+		int32_t off = sample(mode, k) * HALF_HEIGHT;
+		off = (off >= 0) ? (off + peak / 2) / peak : (off - peak / 2) / peak;
+		ycol[c] = (uint8_t)(ZERO_ROW - off);    // |off| <= HALF_HEIGHT
+	}
+
+	// ---- Draw, one page at a time ----
+	uint8_t buf[SCREEN_WIDTH];
+
 	for (uint8_t page = 0; page < SCREEN_PAGES; page++) {
-		
+
 		for (uint8_t i = 0; i < SCREEN_WIDTH; i++) buf[i] = 0x00;
-		
-		// --- Y axis: a full-height vertical line at column AXIS_X ---
-		buf[AXIS_X] = 0xFF;
-		
-		// --- X axis: a horizontal line, only exists in one page ---
-		if (page == AXIS_Y_PAGE) {
-			for (uint8_t x = AXIS_X; x < SCREEN_WIDTH; x++) {
-				buf[x] |= AXIS_Y_BIT;
+
+		if (page == 0) {
+			draw_string(buf, 0, title);
+			draw_string(buf, pk_x, pk);
+		}
+
+		if (page >= PLOT_PAGE_TOP && page <= PLOT_PAGE_BOT) {
+			uint8_t top = page * 8;              // first pixel row in this page
+
+			// Vertical axis
+			buf[AXIS_X] = 0xFF;
+
+			// Dashed zero line
+			if (page == ZERO_ROW / 8) {
+				for (uint8_t x = PLOT_X0; x < SCREEN_WIDTH; x += 2) {
+					buf[x] |= 1 << (ZERO_ROW % 8);
+				}
 			}
-		}
-		
-		// --- Numeric axis labels ---
-		if (page == 0) {
-			draw_string(buf, 0, "54");   // top-of-scale label
-		}
-		if (page == AXIS_Y_PAGE) {
-			draw_string(buf, 0, "0");    // origin label
-		}
-		
-		// --- Titles ---
-		if (page == 0) {
-			draw_string(buf, 90, str);  // title near top-right
-		}
-		if (page == 7) {
-			draw_string(buf, 80, "X AXIS");  // title near bottom
-		}
-		
-		// --- Data points: plot whichever samples fall in this page ---
-		for (uint8_t i = 0; i < NUM_POINTS; i++) {
-			uint8_t y = pgm_read_byte(&demo_data[i]);
-			uint8_t point_page = y / 8;
-			if (point_page == page) {
-				uint8_t x = PLOT_X0 + (i * POINT_SPACING);
-				if (x < SCREEN_WIDTH) {
-					buf[x] |= (1 << (y % 8));
+
+			// Waveform: each column fills from its own row to the previous
+			// column's row, so the points join into a continuous line
+			for (uint8_t c = 0; c < PLOT_WIDTH; c++) {
+				uint8_t y0 = ycol[c];
+				uint8_t y1 = c ? ycol[c - 1] : y0;
+				uint8_t lo = (y0 < y1) ? y0 : y1;
+				uint8_t hi = (y0 < y1) ? y1 : y0;
+				if (lo < top)     lo = top;
+				if (hi > top + 7) hi = top + 7;
+				for (uint8_t r = lo; r <= hi; r++) {   // skipped if lo > hi (not in this page)
+					buf[PLOT_X0 + c] |= 1 << (r - top);
 				}
 			}
 		}
-		
+
+		if (page == 7) {
+			draw_string(buf, 0, values);
+		}
+
 		sh1106_set_page(page);
 		sh1106_write_page_data(buf, SCREEN_WIDTH);
 	}

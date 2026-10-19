@@ -145,6 +145,12 @@
     <Compile Include="convert.h">
       <SubType>compile</SubType>
     </Compile>
+    <Compile Include="format.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="format.h">
+      <SubType>compile</SubType>
+    </Compile>
     <Compile Include="segdisplay.c">
       <SubType>compile</SubType>
     </Compile>

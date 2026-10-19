@@ -11,7 +11,7 @@
 
 #include <avr/pgmspace.h>
 
-// Full A-Z, a-z, 0-9, and space, 5 columns x 7 rows each (bit0 = top row,
+// Full A-Z, a-z, 0-9, space, '.' and '-', 5 columns x 7 rows each (bit0 = top row,
 // bit6 = bottom row). The entire table lives in flash via PROGMEM --
 // nothing here is ever copied into RAM. get_glyph() only returns a
 // pointer into flash; pgm_read_byte() then pulls one byte at a time
@@ -90,14 +90,22 @@ static const uint8_t font_digits[10][5] PROGMEM = {
 	{0x06,0x49,0x49,0x29,0x1E}, // '9'
 };
 
+// Punctuation used for number formatting, also in flash.
+static const uint8_t font_punct[2][5] PROGMEM = {
+	{0x00,0x60,0x60,0x00,0x00}, // '.'
+	{0x08,0x08,0x08,0x08,0x08}, // '-'
+};
+
 // Returns a pointer into flash for the requested character's glyph.
-// Unsupported characters (punctuation) fall back to space.
+// Unsupported characters fall back to space.
 static inline const uint8_t* get_glyph(char c)
 {
 	if (c == ' ') return font_table[0];
 	if (c >= 'A' && c <= 'Z') return font_table[1 + (c - 'A')];
 	if (c >= 'a' && c <= 'z') return font_table[27 + (c - 'a')];
 	if (c >= '0' && c <= '9') return font_digits[c - '0'];
+	if (c == '.') return font_punct[0];
+	if (c == '-') return font_punct[1];
 	return font_table[0];
 }
 

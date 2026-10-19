@@ -7,11 +7,12 @@
 #include "sh1106.h"
 #include "graph.h"
 #include "adc.h"
-#include "segdisplay.h"
-#include "uart.h"
-#include "timeout.h"
 #include "convert.h"
 #include "calc.h"
+#include "format.h"
+#include "timeout.h"
+#include "segdisplay.h"
+#include "uart.h"
 
 typedef enum {
 	STATE_INIT = 0,
@@ -25,60 +26,72 @@ typedef enum {
 } state_t;
 
 static state_t g_state = STATE_INIT;
-static calc_result_t g_result;
 
 /* Call from inside any state to move to another one */
 #define SET_STATE(s)    (g_state = (s))
 
-
-// 9600 baud at 2 MHz, normal speed: UBRR = F_CPU/(16*baud) - 1 = 12 (0.2% error)
-#define UART_BAUD           9600UL
-#define UART_UBRR           ((uint16_t)((F_CPU / (16UL * UART_BAUD)) - 1))
-
-static uint16_t temp = 1234;
-static char buf[5];
+static calc_result_t g_result;                   // Vrms, power, Imax of the last capture
+static graph_mode_t  g_show = GRAPH_POWER;       // what the 7-seg and OLED show this loop
 
 static uint8_t oled_ok = 0;
 
 
-void mv_to_str(uint16_t mv, char *buf)
+// Send the three results as one line, e.g. "Vrms 10618 mV, Imax 405 mA, P 2625 mW"
+static void uart_send_results(const calc_result_t *r)
 {
-	if (mv > 9999) mv = 9999;                   // clamp to 4 digits
+	char line[56];
+	char *p = line;
+	const char *s;
 
-	// Fill digits from least significant to most significant
-	buf[3] = '0' + (mv % 10); mv /= 10;         // ones
-	buf[2] = '0' + (mv % 10); mv /= 10;         // tens
-	buf[1] = '0' + (mv % 10); mv /= 10;         // hundreds
-	buf[0] = '0' + mv;                          // thousands
-	buf[4] = '\0';                              // null terminator
+	for (s = "Vrms ";   *s; s++) *p++ = *s;
+	p = fmt_int(p, r->vrms_mv);
+	for (s = " mV, Imax "; *s; s++) *p++ = *s;
+	p = fmt_int(p, r->imax_ma);
+	for (s = " mA, P "; *s; s++) *p++ = *s;
+	p = fmt_int(p, r->power_mw);
+	for (s = " mW\r\n"; *s; s++) *p++ = *s;
+	*p = '\0';
+
+	uart_puts(line);
+}
+
+// All three results for the OLED's bottom row, e.g. "10.62V 0.405A 2.625W"
+static void results_line(const calc_result_t *r, char *p)
+{
+	p = fmt_milli(p, r->vrms_mv, 'V');
+	*p++ = ' ';
+	p = fmt_milli(p, r->imax_ma, 'A');
+	*p++ = ' ';
+	p = fmt_milli(p, r->power_mw, 'W');
+	*p = '\0';
 }
 
 
 static void state_machine_run(void)
-{ 
+{
 	uint8_t present;
-	uint8_t ok;           
-	
+	uint8_t ok;
+
 	switch (g_state) {
 
 		case STATE_INIT:
 		init_display(128);
 		i2c_init();
-		timeout_init();
-		
+
 		oled_ok = sh1106_probe();
 		if (oled_ok) sh1106_init();
-		
+
 		uart_init();
 		adc_init();
+		timeout_init();
 
 		sei();
 		SET_STATE(STATE_ADC);
 		break;
 
 		case STATE_PERIOD:
-		temp++;
-		_delay_ms(1000);                 // sample period
+		_delay_ms(1000);                         // time between measurements
+		g_show = (graph_mode_t)((g_show + 1) % GRAPH_MODES);   // power -> voltage -> current
 		SET_STATE(STATE_ADC);
 		break;
 
@@ -97,25 +110,24 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_UART:
-		//uart_puts("Vrms ");  uart_put_u16(g_result.vrms_mv);           uart_puts(" mV\r\n");
-		//uart_puts("P ");     uart_put_i16((int16_t)g_result.power_mw); uart_puts(" mW\r\n");
-		//uart_puts("Imax ");  uart_put_u16(g_result.imax_ma);           uart_puts(" mA\r\n");
-		
-		//one line per instant: voltage,current  (CR+LF), blank line after the set
-		for (uint16_t i = 0; i < ADC_POINTS; i++) {
-			uart_put_i16(REAL_MV[i]);
-			uart_putc(' ');
-			uart_put_i16(REAL_MA[i]);
-			uart_puts("\r\n");
-		}
-		uart_puts("\r\n");
-
-
+		uart_send_results(&g_result);
 		SET_STATE(STATE_7SEG);
 		break;
 
 		case STATE_7SEG:
-		seperate_and_load_characters(temp, 0);
+		{
+			uint32_t m;
+			switch (g_show) {
+				case GRAPH_VOLTAGE: m = g_result.vrms_mv; break;
+				case GRAPH_CURRENT: m = g_result.imax_ma; break;
+				default:            // power: no minus sign on the 7-seg, show size
+				m = (g_result.power_mw < 0) ? -g_result.power_mw : g_result.power_mw;
+				break;
+			}
+			uint8_t  dp;
+			uint16_t n = fmt_4digit(m, &dp);
+			seperate_and_load_characters(n, dp);
+		}
 		SET_STATE(STATE_OLED);
 		break;
 
@@ -127,15 +139,17 @@ static void state_machine_run(void)
 		oled_ok = present;
 
 		if (oled_ok) {
-			mv_to_str(temp, buf);
-			graph_render(buf);
+			char vals[24];
+			results_line(&g_result, vals);
+			graph_render(g_show, vals);
 		}
-		
+
 		SET_STATE(STATE_PERIOD);
 		break;
 
 		case STATE_ERROR:
-		SET_STATE(STATE_ADC);                   // try another capture
+		uart_puts("No signal\r\n");
+		SET_STATE(STATE_PERIOD);                 // wait, then try another capture
 		break;
 
 		default:
