@@ -18,7 +18,7 @@
 
 // ---------------------------------------------------------------------
 // Layout (64 rows = 8 pages of 8 rows)
-//   page 0      : title and peak value
+//   page 0      : title left, key measurement right ("RMS: 14.02V")
 //   pages 1..6  : graph, rows 8..55
 //   page 7      : values line
 // ---------------------------------------------------------------------
@@ -57,34 +57,43 @@ static int32_t sample(graph_mode_t mode, uint16_t k)
 	}
 }
 
-void graph_render(graph_mode_t mode, const char *values)
+void graph_render(graph_mode_t mode, int32_t headline, const char *values)
 {
 	static const char t_power[]   PROGMEM = "POWER";
 	static const char t_voltage[] PROGMEM = "VOLTAGE";
 	static const char t_current[] PROGMEM = "CURRENT";
 
+	static const char l_power[]   PROGMEM = "AVG: ";
+	static const char l_voltage[] PROGMEM = "RMS: ";
+	static const char l_current[] PROGMEM = "Peak: ";
+
 	const char *title_p;
+	const char *label_p;
 	char unit;
 	switch (mode) {
-		case GRAPH_VOLTAGE: title_p = t_voltage; unit = 'V'; break;
-		case GRAPH_CURRENT: title_p = t_current; unit = 'A'; break;
-		default:            title_p = t_power;   unit = 'W'; break;
+		case GRAPH_VOLTAGE: title_p = t_voltage; label_p = l_voltage; unit = 'V'; break;
+		case GRAPH_CURRENT: title_p = t_current; label_p = l_current; unit = 'A'; break;
+		default:            title_p = t_power;   label_p = l_power;   unit = 'W'; break;
 	}
 	char title[8];
 	strcpy_P(title, title_p);
 
-	// ---- Peak, used to scale the graph to fill its height ----
+	// ---- Key measurement, right-aligned on the top row, e.g. "RMS: 14.02V" ----
+	char hv[16];                                 // "Peak: " (6) + value (7) + '\0'
+	char *e = hv;
+	strcpy_P(hv, label_p);
+	while (*e) e++;                              // end of the label
+	e = fmt_milli(e, headline, unit);
+	*e = '\0';
+	uint8_t hv_x = SCREEN_WIDTH - (uint8_t)(e - hv) * CHAR_WIDTH;
+
+	// ---- Peak, only used to scale the graph to fill its height ----
 	int32_t peak = 1;                            // never 0, it's a divisor
 	for (uint16_t k = 0; k < ADC_POINTS; k++) {
 		int32_t s = sample(mode, k);
 		if (s < 0) s = -s;
 		if (s > peak) peak = s;
 	}
-
-	char pk[10];
-	char *e = fmt_milli(pk, peak, unit);
-	*e = '\0';
-	uint8_t pk_x = SCREEN_WIDTH - (uint8_t)(e - pk) * CHAR_WIDTH;
 
 	// ---- Pixel row for every graph column (160 points -> 110 columns) ----
 	uint8_t ycol[PLOT_WIDTH];
@@ -105,7 +114,7 @@ void graph_render(graph_mode_t mode, const char *values)
 
 		if (page == 0) {
 			draw_string(buf, 0, title);
-			draw_string(buf, pk_x, pk);
+			draw_string(buf, hv_x, hv);
 		}
 
 		if (page >= PLOT_PAGE_TOP && page <= PLOT_PAGE_BOT) {

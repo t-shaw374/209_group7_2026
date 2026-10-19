@@ -138,7 +138,7 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_PERIOD:
-		_delay_ms(1000);                         // time between measurements
+		_delay_ms(300);                         // time between measurements (trim for ~1 s loop)
 		g_show = (graph_mode_t)((g_show + 1) % GRAPH_MODES);   // power -> voltage -> current
 		SET_STATE(STATE_ADC);
 		break;
@@ -187,9 +187,17 @@ static void state_machine_run(void)
 		oled_ok = present;
 
 		if (oled_ok) {
+			// Key measurement for the top row, same values as the bottom row
+			int32_t headline;
+			switch (g_show) {
+				case GRAPH_VOLTAGE: headline = g_result.vrms_mv;  break;
+				case GRAPH_CURRENT: headline = g_result.imax_ma;  break;
+				default:            headline = g_result.power_mw; break;
+			}
+
 			char vals[24];
 			results_line(&g_result, vals);
-			graph_render(g_show, vals);
+			graph_render(g_show, headline, vals);
 		}
 
 		SET_STATE(STATE_PERIOD);
