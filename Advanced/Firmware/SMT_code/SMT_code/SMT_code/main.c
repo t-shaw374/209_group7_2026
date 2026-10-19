@@ -55,6 +55,27 @@ static void uart_send_results(const calc_result_t *r)
 	uart_puts(line);
 }
 
+// Every 4th point of the converted buffer (40 lines of "mV mA"),
+// then the results line. Call after convert_to_real() and calc_run().
+#define UART_STEP  4
+
+static void uart_send_data(const calc_result_t *r)
+{
+	char line[16];
+
+	uart_puts("--- mV mA ---\r\n");
+	for (uint8_t k = 0; k < ADC_POINTS; k += UART_STEP) {
+		char *p = fmt_int(line, REAL_MV[k]);
+		*p++ = ' ';
+		p = fmt_int(p, REAL_MA[k]);
+		*p++ = '\r';
+		*p++ = '\n';
+		*p = '\0';
+		uart_puts(line);
+	}
+	uart_send_results(r);
+}
+
 // All three results for the OLED's bottom row, e.g. "10.62V 0.405A 2.625W"
 static void results_line(const calc_result_t *r, char *p)
 {
@@ -137,7 +158,7 @@ static void state_machine_run(void)
 		break;
 
 		case STATE_UART:
-		uart_send_results(&g_result);
+		uart_send_data(&g_result);
 		SET_STATE(STATE_7SEG);
 		break;
 
