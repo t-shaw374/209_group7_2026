@@ -58,6 +58,14 @@ uint16_t convert_measure_offset(void)
 	return sum;                                  // 16 conversions = average x 16
 }
 
+// Clamp to the int16_t range
+static int16_t clamp16(int32_t x)
+{
+	if (x >  32767) x =  32767;
+	if (x < -32768) x = -32768;
+	return (int16_t)x;
+}
+
 // d16: (sample - zero) in 1/16 counts, |d16| <= 16368.
 // Returns d16 * K_Q10 / (1024 * 16), rounded, clamped to int16_t.
 // |d16 * K| <= 16368 * 51414 = 8.4e8, fits int32_t.
@@ -65,11 +73,18 @@ uint16_t convert_measure_offset(void)
 // so adding half before the shift rounds to nearest for both signs.
 static int16_t scale(int32_t d16, int32_t k_q10)
 {
-	int32_t x = (d16 * k_q10 + (1L << 13)) >> 14;
-	if (x >  32767) x =  32767;
-	if (x < -32768) x = -32768;
-	return (int16_t)x;
+	return clamp16((d16 * k_q10 + (1L << 13)) >> 14);
 }
+
+#if V_INCLUDE_SHUNT
+// Shunt voltage drop in mV for a current in mA: i * Rshunt_mohm / 1000,
+// rounded to nearest for either sign. |i * 500| <= 1.6e7, fits int32_t.
+static int32_t shunt_drop_mv(int16_t i_ma)
+{
+	int32_t x = (int32_t)i_ma * SHUNT_MOHM;
+	return (x >= 0) ? (x + 500) / 1000 : (x - 500) / 1000;
+}
+#endif
 
 void convert_to_real(void)
 {
@@ -85,8 +100,16 @@ void convert_to_real(void)
 	for (uint16_t k = 0; k < ADC_POINTS; k++) {
 		int32_t rv = (int32_t)adc_buf[ADC_VOLT][k] * 16;   // raw x 16
 		int32_t ri = (int32_t)adc_buf[ADC_CURR][k] * 16;
-		v[k] = scale(rv - zero_v16, V_MV_Q10);
-		c[k] = scale(ri - zero_i16, I_MA_Q10);
+		int16_t vk = scale(rv - zero_v16, V_MV_Q10);      // load voltage, mV
+		int16_t ik = scale(ri - zero_i16, I_MA_Q10);      // current, mA
+#if V_INCLUDE_SHUNT
+		// Same instant in both buffers, so this is the source voltage at
+		// that instant: Vsource = Vload + i * Rshunt
+		v[k] = clamp16((int32_t)vk + shunt_drop_mv(ik));
+#else
+		v[k] = vk;
+#endif
+		c[k] = ik;
 	}
 }
 

@@ -14,7 +14,7 @@
 #include "adc.h"
 
 // Converts the raw ADC counts in adc_buf to real values, in place:
-//   row ADC_VOLT -> load voltage in mV  (int16_t, signed)
+//   row ADC_VOLT -> voltage in mV  (int16_t, signed), see V_INCLUDE_SHUNT
 //   row ADC_CURR -> load current in mA  (int16_t, signed)
 //
 // Zero for both channels is the offset reference on pin 22 (ADC7), measured
@@ -34,6 +34,14 @@
 #define IAMP_RIN      10
 
 #define OFFSET_CH     7      // ADC channel of the offset reference (pin 22)
+
+// Which voltage the firmware reports.
+// The divider sits across the load only, with the shunt in series below it.
+//   0: load voltage (what the divider sees)
+//   1: source voltage = load voltage + shunt drop, added point by point
+//      (v + i * Rshunt at every instant, so phase is exact). Matches a single
+//      scope probe across the AC source. Power then includes the shunt's I^2 R.
+#define V_INCLUDE_SHUNT  1
 
 // Optional per-channel zero corrections, in 1/16 ADC counts. Find them once
 // with the source off: (channel average - offset reading) * 16. Leave at 0
