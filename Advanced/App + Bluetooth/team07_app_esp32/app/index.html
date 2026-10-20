@@ -27,6 +27,7 @@
     --accent-ink: #ffffff;
     --plot: #0b6bcb;
     --plot-fill: rgba(11, 107, 203, 0.10);
+    --plot2: #c2410c;
     --ok: #1a7f37;
     --warn: #b35900;
     --bad: #c62828;
@@ -43,6 +44,7 @@
       --accent-ink: #0f1216;
       --plot: #5aa8f0;
       --plot-fill: rgba(90, 168, 240, 0.14);
+      --plot2: #f59e5b;
       --ok: #4ac26b;
       --warn: #e3a04f;
       --bad: #ef6b6b;
@@ -51,7 +53,7 @@
   }
   :root[data-theme="dark"] {
     --bg: #0f1216; --panel: #171b21; --ink: #e8ebef; --muted: #98a2ae; --line: #2a3038;
-    --accent: #4c9be8; --accent-ink: #0f1216; --plot: #5aa8f0; --plot-fill: rgba(90,168,240,0.14);
+    --accent: #4c9be8; --accent-ink: #0f1216; --plot: #5aa8f0; --plot-fill: rgba(90,168,240,0.14); --plot2: #f59e5b;
     --ok: #4ac26b; --warn: #e3a04f; --bad: #ef6b6b;
     color-scheme: dark;
   }
@@ -115,6 +117,22 @@
   .panel h2 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; }
   .panel h2 span { color: var(--muted); font-weight: 400; font-size: 12px; }
   .chart-wrap { position: relative; height: 300px; }
+  .tgrid { display: grid; grid-template-columns: minmax(130px, 1.4fr) repeat(5, minmax(0, 1fr)); gap: 6px 10px; align-items: baseline; }
+  .tgrid .th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tgrid .tn { font-weight: 600; font-size: 14px; }
+  .tgrid .tn small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .tgrid .tv { font: 600 18px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) {
+    .tgrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .tgrid .th0, .tgrid .tn { grid-column: 1 / -1; }
+    .tgrid .tv { font-size: 15px; }
+  }
+  #tTarget.ok { color: var(--ok); } #tTarget.bad { color: var(--bad); }
+  #wavePanel { display: none; }
+  #wavePanel.on { display: block; }
+  .wave-wrap { position: relative; height: 240px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
   canvas { width: 100%; height: 100%; display: block; }
   .empty {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -148,6 +166,13 @@
   .sim-note { display: none; }
   #doomPanel.sim .sim-note { display: block; }
   #doomPanel.sim .board-note { display: none; }
+  .progress { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin: 12px 0 6px; border: 1px solid var(--line); }
+  #flashBar { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+  #flashBar.ok { background: var(--ok); }
+  #flashBar.bad { background: var(--bad); }
+  .flash-file { flex: 1 1 220px; align-self: center; font-family: var(--mono); overflow-wrap: anywhere; }
+  #flashMsg.bad { color: var(--bad); }
+  #flashMsg.ok { color: var(--ok); }
   .warnbox {
     display: none; border: 1px solid var(--warn); color: var(--ink);
     background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
@@ -189,7 +214,7 @@
     <div class="tile"><div class="label">Max power</div><div class="value"><span id="vMax">&ndash;</span><span class="unit">W</span></div></div>
     <div class="tile"><div class="label">Min power</div><div class="value"><span id="vMin">&ndash;</span><span class="unit">W</span></div></div>
     <div class="tile"><div class="label">Voltage RMS</div><div class="value"><span id="vV">&ndash;</span><span class="unit">V</span></div></div>
-    <div class="tile"><div class="label">Current RMS</div><div class="value"><span id="vI">&ndash;</span><span class="unit">A</span></div></div>
+    <div class="tile"><div class="label" id="lblI">Current RMS</div><div class="value"><span id="vI">&ndash;</span><span class="unit">A</span></div></div>
     <div class="tile"><div class="label">Power factor</div><div class="value"><span id="vPF">&ndash;</span></div></div>
     <div class="tile"><div class="label">Energy</div><div class="value"><span id="vE">&ndash;</span><span class="unit">Wh</span></div></div>
   </section>
@@ -200,6 +225,30 @@
       <canvas id="chart"></canvas>
       <div id="empty" class="empty">Connect to the board, press Demo for built-in test data, or Replay a file.</div>
     </div>
+  </section>
+
+  <section class="panel" id="wavePanel">
+    <h2>Waveform <span id="waveInfo">one period, as sent by the ATmega</span></h2>
+    <div class="wave-wrap"><canvas id="wave"></canvas></div>
+    <div class="legend"><span><i style="background:var(--plot)"></i>Voltage (mV, left axis)</span><span><i style="background:var(--plot2)"></i>Current (mA, right axis)</span></div>
+  </section>
+
+  <section class="panel" id="timingPanel">
+    <h2>Timing <span>measured when each line reaches this page</span></h2>
+    <div class="tgrid">
+      <div class="th th0"></div><div class="th">Last</div><div class="th">Average</div><div class="th">Min</div><div class="th">Max</div><div class="th">Count</div>
+      <div class="tn">Update interval<small>one data set to the next</small></div>
+      <div class="tv" id="tiLast">–</div><div class="tv" id="tiAvg">–</div><div class="tv" id="tiMin">–</div><div class="tv" id="tiMax">–</div><div class="tv" id="tiN">0</div>
+      <div class="tn">Send time<small>first byte to results line</small></div>
+      <div class="tv" id="tsLast">–</div><div class="tv" id="tsAvg">–</div><div class="tv" id="tsMin">–</div><div class="tv" id="tsMax">–</div><div class="tv" id="tsN">0</div>
+    </div>
+    <div class="row" style="margin-top:10px; align-items:center">
+      <span id="tTarget" class="note" style="flex:1 1 220px">Waiting for data. Target: a full data set in under 1 s.</span>
+      <button id="timingReset">Reset timing</button>
+    </div>
+    <p class="note" style="margin:8px 0 0">The ESP32 forwards data in Bluetooth packets, and with the low-power bridge settings
+      the link only exchanges packets every 100–200 ms, so a single value can be off by about that much. The average over many
+      data sets is reliable. For finer numbers, set <code>LOW_POWER 0</code> in the bridge sketch while debugging.</p>
   </section>
 
   <section class="panel" id="doomPanel">
@@ -233,10 +282,25 @@
     <pre id="log"></pre>
   </section>
 
+  <section class="panel" id="flashPanel">
+    <h2>Flash ATmega <span>firmware over Bluetooth, written by the ESP32 over SPI</span></h2>
+    <div class="row">
+      <button id="hexBtn">Choose .hex</button>
+      <input id="hexIn" type="file" accept=".hex,.ihx" hidden>
+      <span id="hexInfo" class="note flash-file">No file chosen. Microchip Studio puts it in the project's Debug folder.</span>
+      <button id="backupBtn" disabled title="Read the program now on the ATmega and save it as a .hex file. Doesn't change the chip.">Back up chip</button>
+      <button id="flashBtn" class="primary" disabled>Flash</button>
+    </div>
+    <div class="progress"><div id="flashBar"></div></div>
+    <div id="flashMsg" class="note">Connect to the board and choose a .hex file.</div>
+  </section>
+
   <p class="note">
     Protocol: <code>A,min,max,unit</code> sets the graph axis &middot;
     <code>D,t,Vrms,Irms,P,PF,E</code> is one reading &middot;
-    <code>M,Pmin,Pmax</code> is the ATmega's min/max power. Unknown lines are shown in the log and ignored.
+    <code>M,Pmin,Pmax</code> is the ATmega's min/max power.
+    The team SMT_code line <code>Vrms 10618 mV, Imax 405 mA, P 2625 mW</code> and its <code>--- mV mA ---</code> sample block are understood too.
+    Unknown lines are shown in the log and ignored.
   </p>
 </main>
 
@@ -562,11 +626,204 @@ D,29.0,13.50,0.367,4.93,0.99,0.039
 M,4.87,5.01
 </script>
 
+<script id="avrFlashModule">
+// ---------- AVR flashing: Intel HEX parser + programmer protocol ----------
+// No Bluetooth or page code in here, so test/isp_sim/run_app_test.js can run it
+// against the simulated ATmega. The ESP32 side is esp32_ble_bridge/avr_isp.h.
+const AvrFlash = (() => {
+  const FLASH_BYTES = 32768, PAGE = 128;
+  const CHIPS = { '1e950f': 'ATmega328P', '1e9516': 'ATmega328PB' };
+  const STATUS = ['ok', 'no answer from the ATmega', 'verify failed', 'bad request', 'chip stayed busy'];
+
+  function parseHex(text) {
+    const image = new Uint8Array(FLASH_BYTES).fill(0xFF);
+    let base = 0, end = 0, dataBytes = 0, sawEof = false;
+    const lines = text.split(/\r?\n/);
+    for (let n = 0; n < lines.length; n++) {
+      const l = lines[n].trim();
+      if (!l) continue;
+      const where = 'line ' + (n + 1);
+      if (l[0] !== ':' || l.length < 11 || l.length % 2 === 0 || /[^0-9a-f]/i.test(l.slice(1)))
+        throw new Error(where + ' is not an Intel HEX record');
+      const b = [];
+      for (let i = 1; i < l.length; i += 2) b.push(parseInt(l.substr(i, 2), 16));
+      const len = b[0], addr = (b[1] << 8) | b[2], type = b[3];
+      if (b.length !== len + 5) throw new Error(where + ': length does not match');
+      if ((b.reduce((a, x) => a + x, 0) & 0xFF) !== 0) throw new Error(where + ': checksum error');
+      if (type === 0x00) {
+        const at = base + addr;
+        if (at + len > FLASH_BYTES)
+          throw new Error(where + ': address 0x' + at.toString(16) + ' is beyond the 32 KB flash (is this the .eep EEPROM file?)');
+        for (let i = 0; i < len; i++) image[at + i] = b[4 + i];
+        end = Math.max(end, at + len);
+        dataBytes += len;
+      } else if (type === 0x01) { sawEof = true; break; }
+      else if (type === 0x02) base = ((b[4] << 8) | b[5]) << 4;
+      else if (type === 0x04) base = ((b[4] << 8) | b[5]) << 16;
+      // 0x03 / 0x05 (start address) are not needed for an AVR
+    }
+    if (!sawEof) throw new Error('file is incomplete (no end-of-file record)');
+    if (!dataBytes) throw new Error('file contains no program data');
+    const pages = [];
+    for (let a = 0; a < end; a += PAGE)
+      if (image.subarray(a, a + PAGE).some(x => x !== 0xFF)) pages.push(a);
+    return { image, bytes: end, dataBytes, pages };
+  }
+
+  // io.call(Uint8Array) -> Promise<Uint8Array reply>; report(fraction, text)
+  async function flash(prog, io, report) {
+    const t0 = Date.now();
+    const check = (r, op) => {
+      if (!r || r[0] !== op.charCodeAt(0)) throw new Error('unexpected reply from the ESP32');
+      if (r[1] !== 0) throw new Error(STATUS[r[1]] || ('error ' + r[1]));
+      return r;
+    };
+    const hex2 = x => x.toString(16).padStart(2, '0');
+    let chunked = false;
+    try {
+      report(0, 'Holding the ATmega in reset, entering programming mode…');
+      const e = await io.call(Uint8Array.of(0x45));                        // 'E'
+      if (e[1] === 1) throw new Error('no answer from the ATmega: check RESET, MOSI, MISO, SCK, GND and that it is powered');
+      check(e, 'E');
+      const sig = hex2(e[2]) + hex2(e[3]) + hex2(e[4]);
+      const chip = CHIPS[sig];
+      if (!chip) throw new Error('unknown chip signature ' + sig + ' (expected 1e950f or 1e9516): check the SPI wiring');
+      const f = check(await io.call(Uint8Array.of(0x46)), 'F');            // 'F'
+      const div8 = (f[2] & 0x80) === 0;
+      const info = { chip, signature: sig, lowFuse: f[2], highFuse: f[3], extFuse: f[4], lock: f[5], ckdiv8: div8, slowClock: e[5] > 2 };
+      report(0.02, `${chip} found (fuses L ${hex2(f[2])} H ${hex2(f[3])} E ${hex2(f[4])}, CKDIV8 ${div8 ? 'on' : 'OFF'}). Erasing…`);
+
+      check(await io.call(Uint8Array.of(0x58)), 'X');                      // 'X'
+
+      for (let i = 0; i < prog.pages.length; i++) {
+        const a = prog.pages[i];
+        const data = prog.image.subarray(a, a + PAGE);
+        let r = null;
+        if (!chunked) {
+          try {
+            r = await io.call(Uint8Array.of(0x50, a & 0xFF, a >> 8, ...data));   // 'P' whole page
+          } catch (err) {
+            if (err.fatal) throw err;
+            chunked = true;            // link can't carry 131 bytes: send it in pieces
+          }
+        }
+        if (chunked) {
+          for (let off = 0; off < PAGE; off += 16)
+            check(await io.call(Uint8Array.of(0x4C, off, ...data.subarray(off, off + 16))), 'L');
+          r = await io.call(Uint8Array.of(0x57, a & 0xFF, a >> 8));           // 'W'
+        }
+        if (r[1] === 2) throw new Error('verify failed at 0x' + a.toString(16).padStart(4, '0') + ': the page read back differently (check the MISO divider and SCK wiring)');
+        check(r, chunked ? 'W' : 'P');
+        report(0.03 + 0.95 * (i + 1) / prog.pages.length,
+               `Writing ${i + 1} / ${prog.pages.length} pages (${Math.round((i + 1) * PAGE / 1024 * 10) / 10} KB)`);
+      }
+      check(await io.call(Uint8Array.of(0x51)), 'Q');                      // 'Q'
+      info.ms = Date.now() - t0;
+      info.chunked = chunked;
+      return info;
+    } catch (err) {
+      try { await io.call(Uint8Array.of(0x51)); } catch (_) {}            // always let the ATmega run again
+      throw err;
+    }
+  }
+
+  // Read the whole flash (for a backup). The ATmega is held in reset while it is
+  // read and restarts afterwards; its program is not changed.
+  async function readFlash(io, report) {
+    const t0 = Date.now();
+    const check = (r, op) => {
+      if (!r || r[0] !== op.charCodeAt(0)) throw new Error('unexpected reply from the ESP32');
+      if (r[1] !== 0) throw new Error(STATUS[r[1]] || ('error ' + r[1]));
+      return r;
+    };
+    const hex2 = x => x.toString(16).padStart(2, '0');
+    const image = new Uint8Array(FLASH_BYTES).fill(0xFF);
+    try {
+      report(0, 'Holding the ATmega in reset, entering programming mode…');
+      const e = await io.call(Uint8Array.of(0x45));
+      if (e[1] === 1) throw new Error('no answer from the ATmega: check RESET, MOSI, MISO, SCK, GND and that it is powered');
+      check(e, 'E');
+      const sig = hex2(e[2]) + hex2(e[3]) + hex2(e[4]);
+      const chip = CHIPS[sig];
+      if (!chip) throw new Error('unknown chip signature ' + sig + ': check the SPI wiring');
+      const f = check(await io.call(Uint8Array.of(0x46)), 'F');
+      const locked = (f[5] & 0x03) !== 0x03;          // lock bits block reading
+      if (locked) throw new Error('the chip is read-protected (lock bits ' + hex2(f[5]) + '), so its program cannot be read back');
+      let n = 128;
+      for (let a = 0; a < FLASH_BYTES; ) {
+        let r = check(await io.call(Uint8Array.of(0x52, a & 0xFF, a >> 8, n)), 'R');
+        if (r.length < 4 + n) {                        // link cut the reply short: use smaller reads
+          if (n === 16) throw new Error('replies from the ESP32 are being cut short');
+          n = 16;
+          continue;
+        }
+        image.set(r.subarray(4, 4 + n), a);
+        a += n;
+        if (a % 1024 === 0) report(a / FLASH_BYTES, `Reading ${a / 1024} / 32 KB`);
+      }
+      check(await io.call(Uint8Array.of(0x51)), 'Q');
+      let end = FLASH_BYTES;
+      while (end > 0 && image[end - 1] === 0xFF) end--;
+      return { image, used: end, chip, signature: sig, lowFuse: f[2], highFuse: f[3], extFuse: f[4], lock: f[5], ms: Date.now() - t0 };
+    } catch (err) {
+      try { await io.call(Uint8Array.of(0x51)); } catch (_) {}
+      throw err;
+    }
+  }
+
+  // Intel HEX text for an image (blank 0xFF lines left out, like a compiler's .hex)
+  function toHex(image) {
+    const out = [];
+    for (let a = 0; a < image.length; a += 16) {
+      const d = image.subarray(a, a + 16);
+      if (d.every(x => x === 0xFF)) continue;
+      const b = [d.length, (a >> 8) & 0xFF, a & 0xFF, 0, ...d];
+      b.push((-b.reduce((x, y) => x + y, 0)) & 0xFF);
+      out.push(':' + b.map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase());
+    }
+    out.push(':00000001FF');
+    return out.join('\r\n') + '\r\n';
+  }
+
+  // -1 if identical, else the first differing byte address
+  function firstDifference(a, b) {
+    for (let i = 0; i < FLASH_BYTES; i++) if (a[i] !== b[i]) return i;
+    return -1;
+  }
+
+  // Request/reply over BLE. A call finishes only when BOTH the write has been
+  // acknowledged AND the reply notification has arrived: Chrome allows one GATT
+  // operation at a time, and the reply can arrive before the write is confirmed.
+  const fatal = msg => Object.assign(new Error(msg), { fatal: true });
+  function makeIo(write, timeoutMs = 8000) {
+    let waiting = null;
+    return {
+      notify(r) { if (waiting && r.length && r[0] === waiting.op) waiting.reply(r); },   // stray/late replies ignored
+      cancel(err) { if (waiting) waiting.fail(err); },
+      call(bytes) {
+        return new Promise((resolve, reject) => {
+          let reply = null, written = false, done = false;
+          const finish = (fn, v) => { if (done) return; done = true; clearTimeout(timer); waiting = null; fn(v); };
+          const timer = setTimeout(() => finish(reject, fatal('no reply from the ESP32 (timed out)')), timeoutMs);
+          waiting = { op: bytes[0], reply: r => { reply = r; if (written) finish(resolve, r); }, fail: e => finish(reject, e) };
+          Promise.resolve().then(() => write(bytes)).then(
+            () => { written = true; if (reply) finish(resolve, reply); },
+            e => finish(reject, e));
+        });
+      },
+    };
+  }
+
+  return { parseHex, flash, readFlash, toHex, firstDifference, makeIo, fatal, PAGE };
+})();
+</script>
+
 <script>
 (() => {
   const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
   const NUS_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // app -> ESP32 (write)
   const NUS_TX      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 -> app (notify)
+  const ISP_CHAR    = '6e400010-b5a3-f393-e0a9-e50e24dcca9e'; // programmer (write + notify)
   const MAX_POINTS  = 120;   // how many readings stay on screen
   const MAX_LOG     = 60;
 
@@ -579,7 +836,7 @@ M,4.87,5.01
   };
 
   const state = {
-    device: null, rxChar: null,
+    device: null, rxChar: null, ispChar: null,
     axis: null,                 // {min, max, minText, maxText, unit} from the ATmega
     mm: null,                   // {min, max, minText, maxText} min/max power from the ATmega
     points: [],                 // [{t, tText, p}]
@@ -608,6 +865,7 @@ M,4.87,5.01
 
   // ---------- line parsing (no maths: values are shown as received) ----------
   function feedText(text) {
+    if (text.length) timingChunk();
     state.partial += text;
     let nl;
     while ((nl = state.partial.indexOf('\n')) >= 0) {
@@ -618,7 +876,134 @@ M,4.87,5.01
     if (state.partial.length > 256) state.partial = '';   // garbage guard
   }
 
+  // ---- team SMT_code format (t-shaw374/209_group7_2026, main.c) ----
+  //   "Vrms 10618 mV, Imax 405 mA, P 2625 mW"   one result per capture
+  //   "--- mV mA ---" then lines "v i"           one period of samples (debug build)
+  //   "--- raw counts ---" then lines "v i"      raw ADC counts (shown in the log only)
+  //   "No signal"
+  // Values arrive in milli-units; the app only moves the decimal point to show them.
+  const TEAM_RE = /^Vrms\s+(-?\d+)\s*mV,\s*Imax\s+(-?\d+)\s*mA,\s*P\s+(-?\d+)\s*mW$/;
+  const milli = (txt, dp) => (Number(txt) / 1000).toFixed(dp);   // "10618" -> "10.62" (units only)
+  state.block = null;          // {kind: 'mv' | 'raw', v: [], i: []} while a sample block arrives
+  state.wave = null;           // last complete mV/mA block
+  state.teamT0 = null;
+  state.replayT = null;        // replay supplies its own clock (1 s per reading)
+
+  // ---- timing of data sets (for debugging the ATmega's update rate) ----
+  // A data set ends with a results line ("Vrms ..." or "D,..."). Times are taken
+  // with performance.now() when text reaches the page; nothing here touches the values.
+  const timing = { firstAt: null, lastSetAt: null, iv: [], sd: [] };
+  const fmtMs = ms => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
+  function statsShow(arr, prefix) {
+    const n = arr.length;
+    $(prefix + 'N').textContent = n;
+    if (!n) { ['Last', 'Avg', 'Min', 'Max'].forEach(k => $(prefix + k).textContent = '–'); return; }
+    let sum = 0, mn = Infinity, mx = -Infinity;
+    for (const x of arr) { sum += x; if (x < mn) mn = x; if (x > mx) mx = x; }
+    $(prefix + 'Last').textContent = fmtMs(arr[n - 1]);
+    $(prefix + 'Avg').textContent = fmtMs(sum / n);
+    $(prefix + 'Min').textContent = fmtMs(mn);
+    $(prefix + 'Max').textContent = fmtMs(mx);
+    return sum / n;
+  }
+  function timingShow() {
+    const avg = statsShow(timing.iv, 'ti');
+    statsShow(timing.sd, 'ts');
+    const el = $('tTarget');
+    if (avg === undefined) { el.className = 'note'; el.textContent = 'Waiting for two data sets. Target: a full data set in under 1 s.'; return; }
+    const okay = avg < 1000;
+    el.className = 'note ' + (okay ? 'ok' : 'bad');
+    el.textContent = `Average update every ${fmtMs(avg)}: ${okay ? 'under' : 'over'} the 1 s target` +
+                     (okay ? '.' : ` by ${fmtMs(avg - 1000)}.`);
+  }
+  function timingReset() {
+    timing.firstAt = null; timing.lastSetAt = null; timing.iv = []; timing.sd = [];
+    timingShow();
+  }
+  function timingChunk() {                       // any text arrived from the board
+    if (timing.firstAt === null) timing.firstAt = performance.now();
+  }
+  function timingDataSet() {                     // a results line just completed
+    if (state.demoTimer) return;                 // replay/demo timing is not the board's
+    const now = performance.now();
+    if (timing.lastSetAt !== null) timing.iv.push(now - timing.lastSetAt);
+    if (timing.firstAt !== null) timing.sd.push(now - timing.firstAt);
+    timing.lastSetAt = now;
+    // text already received after the results line belongs to the next data set
+    timing.firstAt = state.partial.length ? now : null;
+    timingShow();
+  }
+  $('timingReset').addEventListener('click', timingReset);
+
+  function endBlock() {
+    const b = state.block;
+    if (!b) return;
+    state.block = null;
+    log(`← (${b.v.length} ${b.kind === 'mv' ? 'mV / mA' : 'raw count'} sample lines)`);
+    if (b.kind === 'mv' && b.v.length >= 8) { state.wave = b; drawWave(); }
+  }
+
+  function handleTeamLine(line) {
+    const m = TEAM_RE.exec(line);
+    if (m) {
+      endBlock();
+      timingDataSet();
+      log('← ' + line);
+      const [, vmv, ima, pmw] = m;
+      const now = state.replayT !== null ? state.replayT : performance.now() / 1000;
+      if (state.teamT0 === null) state.teamT0 = now;
+      const t = now - state.teamT0;
+      const p = Number(pmw) / 1000;                       // only used to place the point
+      state.points.push({ t, tText: t.toFixed(1), p });
+      if (state.points.length > MAX_POINTS) state.points.shift();
+      if (!state.axis) { state.axis = { min: 0, max: 8, minText: '0', maxText: '8', unit: 'W' };
+                         ui.axisInfo.textContent = 'axis 0–8 W (rated 7.5 VA)'; }
+      $('lblI').textContent = 'Current peak';
+      ui.vV.textContent = milli(vmv, 2);
+      ui.vI.textContent = milli(ima, 3);
+      ui.vP.textContent = milli(pmw, 2);
+      ui.vPF.textContent = '–';
+      ui.vE.textContent = '–';
+      // min / max of the values received (a comparison, no arithmetic on them)
+      const txt = milli(pmw, 2);
+      if (!state.mm) state.mm = { min: p, max: p, minText: txt, maxText: txt };
+      if (p < state.mm.min) Object.assign(state.mm, { min: p, minText: txt });
+      if (p > state.mm.max) Object.assign(state.mm, { max: p, maxText: txt });
+      ui.vMin.textContent = state.mm.minText;
+      ui.vMax.textContent = state.mm.maxText;
+      state.rawLines.push(line);
+      draw();
+      return true;
+    }
+    if (line === '--- mV mA ---' || line === '--- raw counts ---') {
+      endBlock();
+      log('← ' + line);
+      state.block = { kind: line.includes('mV') ? 'mv' : 'raw', v: [], i: [] };
+      state.rawLines.push(line);
+      return true;
+    }
+    if (state.block) {
+      const n = line.split(/[\s,;]+/).filter(Boolean);
+      if ((n.length === 2 || n.length === 3) && n.every(x => /^-?\d+$/.test(x))) {
+        state.block.v.push(Number(n[n.length - 2]));
+        state.block.i.push(Number(n[n.length - 1]));
+        state.rawLines.push(line);
+        return true;
+      }
+      endBlock();                                          // anything else ends the block
+    }
+    if (line === 'No signal') {
+      log('← ' + line);
+      ui.vP.textContent = ui.vV.textContent = ui.vI.textContent = '–';
+      setStatus('ATmega: no signal (check the AC source)', 'warn');
+      state.rawLines.push(line);
+      return true;
+    }
+    return false;
+  }
+
   function handleLine(line) {
+    if (handleTeamLine(line)) return;
     log('← ' + line);
     const f = line.split(',');
     if (line === 'OK,DOOM') { if (sim.on) simStop(); setDoom(true); return; }
@@ -641,6 +1026,7 @@ M,4.87,5.01
       }
       state.rawLines.push(line);
     } else if (f[0] === 'D' && f.length >= 5) {
+      timingDataSet();
       const t = parseFloat(f[1]), p = parseFloat(f[4]);
       if (!isFinite(t) || !isFinite(p)) return;
       const last = state.points[state.points.length - 1];
@@ -742,8 +1128,46 @@ M,4.87,5.01
     g.fillStyle = color; g.fill();
     g.strokeStyle = css('--panel'); g.lineWidth = 2; g.stroke();
   }
-  window.addEventListener('resize', draw);
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
+  function drawWave() {
+    const w0 = state.wave;
+    $('wavePanel').classList.toggle('on', !!w0);
+    if (!w0) return;
+    const c = $('wave'), dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const padL = 56, padR = 56, padT = 10, padB = 22;
+    const pw = w - padL - padR, ph = h - padT - padB, n = w0.v.length;
+    // symmetric scale per trace, rounded up to a tidy step (only for placing pixels)
+    const nice = x => { const e = Math.pow(10, Math.floor(Math.log10(Math.max(x, 1)))); for (const k of [1, 2, 2.5, 5, 10]) if (k * e >= x) return k * e; return 10 * e; };
+    const vMax = nice(Math.max(...w0.v.map(Math.abs))), iMax = nice(Math.max(...w0.i.map(Math.abs)));
+    const xOf = k => padL + (n === 1 ? 0 : k / (n - 1) * pw);
+    const yOf = (v, m) => padT + ph / 2 - v / m * (ph / 2);
+    g.font = '11px system-ui, sans-serif';
+    g.strokeStyle = css('--line'); g.lineWidth = 1;
+    g.fillStyle = css('--muted');
+    for (const f of [-1, -0.5, 0, 0.5, 1]) {
+      const y = padT + ph / 2 - f * ph / 2;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+      g.textAlign = 'right'; g.fillText(String(f * vMax), padL - 6, y + 4);
+      g.textAlign = 'left';  g.fillText(String(f * iMax), padL + pw + 6, y + 4);
+    }
+    g.textAlign = 'center';
+    g.fillText('sample (one period, ' + n + ' points)', padL + pw / 2, h - 4);
+    const trace = (arr, m, color) => {
+      g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+      arr.forEach((v, k) => k ? g.lineTo(xOf(k), yOf(v, m)) : g.moveTo(xOf(k), yOf(v, m)));
+      g.stroke();
+    };
+    trace(w0.v, vMax, css('--plot'));
+    trace(w0.i, iMax, css('--plot2'));
+  }
+  window.addEventListener('resize', () => { draw(); drawWave(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { draw(); drawWave(); });
 
   // ---------- Bluetooth ----------
   async function connect() {
@@ -764,7 +1188,20 @@ M,4.87,5.01
       tx.addEventListener('characteristicvaluechanged', e =>
         feedText(decoder.decode(e.target.value, { stream: true })));
       await tx.startNotifications();
+      try {                                 // programmer: only in the newer bridge firmware
+        state.ispChar = await service.getCharacteristic(ISP_CHAR);
+        state.ispChar.addEventListener('characteristicvaluechanged', e => {
+          const r = new Uint8Array(e.target.value.buffer.slice(0));
+          ispIo.notify(r);
+        });
+        await state.ispChar.startNotifications();
+      } catch (_) {
+        state.ispChar = null;
+      }
+      state.replayT = null; state.teamT0 = null;
+      timingReset();
       setStatus('Connected to ' + (device.name || 'device'), 'ok');
+      updateFlashUi();
       ui.connect.textContent = 'Disconnect';
       ui.send.disabled = false;
       ui.resetMM.disabled = false;
@@ -778,6 +1215,9 @@ M,4.87,5.01
     ui.send.disabled = true;
     ui.resetMM.disabled = true;
     state.rxChar = null;
+    state.ispChar = null;
+    ispIo.cancel(fatal('Bluetooth disconnected'));
+    updateFlashUi();
     setDoom(false);
   }
   ui.connect.addEventListener('click', () => {
@@ -786,6 +1226,14 @@ M,4.87,5.01
   });
 
   // Bluetooth writes must not overlap, so every send goes through one queue.
+  // Chrome allows only one GATT operation at a time, so EVERY write (text and
+  // programmer) goes through this one queue.
+  let gattChain = Promise.resolve();
+  function gatt(op) {
+    const p = gattChain.then(op);
+    gattChain = p.catch(() => {});
+    return p;
+  }
   let sendChain = Promise.resolve(), queued = 0;
   function sendText(text, quiet) {
     if (!text || !state.rxChar) return Promise.resolve(false);
@@ -794,7 +1242,8 @@ M,4.87,5.01
       const bytes = new TextEncoder().encode(text + '\n');
       try {
         for (let i = 0; i < bytes.length; i += 20) {        // 20-byte BLE packets
-          await state.rxChar.writeValue(bytes.slice(i, i + 20));
+          const c = state.rxChar;
+          await gatt(() => c.writeValue(bytes.slice(i, i + 20)));
         }
         if (!quiet) log('→ ' + text);
         return true;
@@ -804,6 +1253,130 @@ M,4.87,5.01
     sendChain = job;
     return job;
   }
+
+  // ---------- Flash ATmega (programmer on the ESP32, protocol in AvrFlash) ----------
+  const isp = { prog: null, name: '', busy: false };
+  const fatal = AvrFlash.fatal;
+  const ispIo = AvrFlash.makeIo(bytes => gatt(() => {
+    const c = state.ispChar;
+    if (!c) throw fatal('not connected');
+    return c.writeValueWithResponse ? c.writeValueWithResponse(bytes) : c.writeValue(bytes);
+  }));
+  const ispCall = bytes => ispIo.call(bytes);
+
+  function flashMsg(text, kind) {
+    $('flashMsg').textContent = text;
+    $('flashMsg').className = 'note' + (kind ? ' ' + kind : '');
+  }
+  function updateFlashUi() {
+    const ok = !!(state.ispChar && isp.prog && !isp.busy);
+    $('flashBtn').disabled = !ok;
+    $('backupBtn').disabled = !(state.ispChar && !isp.busy);
+    $('hexBtn').disabled = isp.busy;
+    if (isp.busy) return;
+    if (state.rxChar && !state.ispChar) flashMsg('This ESP32 runs the older bridge firmware without the programmer: upload the new esp32_ble_bridge first.', 'bad');
+    else if (!state.rxChar) flashMsg(isp.prog ? 'Connect to the board to flash.' : 'Connect to the board and choose a .hex file.');
+    else if (!isp.prog) flashMsg('Choose the .hex file to write, or press Back up chip to save what is on the ATmega now.');
+    else flashMsg('Ready: press Flash. The ATmega stops while it is programmed (about 10–30 s).');
+  }
+
+  $('hexBtn').addEventListener('click', () => $('hexIn').click());
+  $('hexIn').addEventListener('change', async () => {
+    const f = $('hexIn').files[0];
+    $('hexIn').value = '';
+    if (!f) return;
+    try {
+      isp.prog = AvrFlash.parseHex(await f.text());
+      isp.name = f.name;
+      $('hexInfo').textContent = `${f.name}: ${isp.prog.dataBytes.toLocaleString()} bytes, ${isp.prog.pages.length} pages`;
+      $('flashBar').style.width = '0'; $('flashBar').className = '';
+    } catch (err) {
+      isp.prog = null;
+      $('hexInfo').textContent = f.name + ': ' + err.message;
+    }
+    updateFlashUi();
+  });
+
+  function saveFile(name, text) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  $('backupBtn').addEventListener('click', async () => {
+    if (!state.ispChar || isp.busy) return;
+    isp.busy = true;
+    updateFlashUi();
+    ui.send.disabled = ui.resetMM.disabled = true;
+    const bar = $('flashBar');
+    bar.className = '';
+    log('Reading the ATmega for a backup…');
+    try {
+      const r = await AvrFlash.readFlash({ call: ispCall }, (frac, text) => {
+        bar.style.width = (frac * 100).toFixed(1) + '%';
+        flashMsg(text);
+      });
+      bar.style.width = '100%'; bar.className = 'ok';
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
+      const name = `backup_${r.chip}_${stamp}.hex`;
+      if (r.used === 0) {
+        flashMsg(`The ${r.chip} is blank (erased): nothing to back up.`, 'ok');
+      } else {
+        saveFile(name, AvrFlash.toHex(r.image));
+        let msg = `Saved ${name}: ${r.used.toLocaleString()} bytes of program from the ${r.chip} (${(r.ms / 1000).toFixed(1)} s). The ATmega has restarted, unchanged.`;
+        if (isp.prog) {
+          const d = AvrFlash.firstDifference(r.image, isp.prog.image);
+          msg += d < 0 ? ` It is identical to ${isp.name}.`
+                       : ` It is different from ${isp.name} (first difference at 0x${d.toString(16).padStart(4, '0')}).`;
+        }
+        flashMsg(msg, 'ok');
+      }
+      log('Backup read OK: ' + r.chip + ', ' + r.used + ' bytes');
+    } catch (err) {
+      bar.className = 'bad';
+      flashMsg('Backup failed: ' + err.message + '. Nothing was written; the ATmega has been released.', 'bad');
+      log('Backup failed: ' + err.message);
+    } finally {
+      isp.busy = false;
+      if (state.rxChar) ui.send.disabled = ui.resetMM.disabled = false;
+      updateFlashUi();
+    }
+  });
+
+  $('flashBtn').addEventListener('click', async () => {
+    if (!isp.prog || !state.ispChar) return;
+    if (!confirm(`Flash ${isp.name}?\n\nThis ERASES the program that is on the ATmega now. ` +
+                 `If you might need it again, press Cancel and use "Back up chip" first.`)) return;
+    isp.busy = true;
+    updateFlashUi();
+    ui.send.disabled = ui.resetMM.disabled = true;
+    const bar = $('flashBar');
+    bar.className = '';
+    log('Flashing ' + isp.name + '…');
+    try {
+      const info = await AvrFlash.flash(isp.prog, { call: ispCall }, (frac, text) => {
+        bar.style.width = (frac * 100).toFixed(1) + '%';
+        flashMsg(text);
+      });
+      bar.style.width = '100%'; bar.className = 'ok';
+      const s = (info.ms / 1000).toFixed(1);
+      let msg = `Done: ${isp.prog.dataBytes.toLocaleString()} bytes written and verified on the ${info.chip} in ${s} s. It is running the new program.`;
+      if (!info.ckdiv8) msg += ' Note: the CKDIV8 fuse is off, so the chip runs at 16 MHz, not the 2 MHz the firmware expects.';
+      flashMsg(msg, 'ok');
+      log('Flash OK: ' + info.chip + ', ' + s + ' s' + (info.chunked ? ' (small packets)' : ''));
+    } catch (err) {
+      bar.className = 'bad';
+      flashMsg('Flash failed: ' + err.message + '. The ATmega has been released; the old program may be partly erased, so flash again once it is fixed.', 'bad');
+      log('Flash failed: ' + err.message);
+    } finally {
+      isp.busy = false;
+      if (state.rxChar) ui.send.disabled = ui.resetMM.disabled = false;
+      updateFlashUi();
+    }
+  });
+  updateFlashUi();
 
   // ---------- DOOM mode controls ----------
   state.doom = false;
@@ -921,6 +1494,7 @@ M,4.87,5.01
     state.points = [];
     state.axis = null;
     state.mm = null;
+    state.teamT0 = null; state.replayT = 0; state.wave = null; state.block = null; drawWave();
     ui.vMin.textContent = ui.vMax.textContent = '–';
     ui.axisInfo.textContent = 'axis: waiting for ATmega';
     const lines = text.split(/\r?\n/).filter(l => l && !l.startsWith('#'));
@@ -932,11 +1506,12 @@ M,4.87,5.01
       let out = '';
       while (i < lines.length) {
         out += lines[i] + '\n';
-        if (lines[i++].startsWith('D,')) break;
+        const l = lines[i++];
+        if (l.startsWith('D,') || l.startsWith('Vrms ')) { if (l.startsWith('Vrms ')) state.replayT = (state.replayT || 0) + 1; break; }
       }
       for (let k = 0; k < out.length; k += 20) feedText(out.slice(k, k + 20));
       if (i < lines.length) state.demoTimer = setTimeout(step, +speedSel.value);
-      else { stopDemo(); setStatus('Replay of ' + label + ' finished'); }
+      else { stopDemo(); state.replayT = null; setStatus('Replay of ' + label + ' finished'); }
     };
     step();
   }
@@ -953,6 +1528,7 @@ M,4.87,5.01
 
   ui.clear.addEventListener('click', () => {
     state.points = []; state.rawLines = []; state.logLines = []; state.mm = null;
+    state.wave = null; state.block = null; state.teamT0 = null; drawWave();
     ui.log.textContent = '';
     ['vP', 'vMax', 'vMin', 'vV', 'vI', 'vPF', 'vE'].forEach(k => ui[k].textContent = '–');
     draw();
