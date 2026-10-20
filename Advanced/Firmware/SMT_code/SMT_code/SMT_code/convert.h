@@ -22,16 +22,16 @@
 // through 1:1, so the reference reading is each channel's zero.
 
 // ---- Hardware values (change here if the circuit changes) ----------------
-#define AREF_MV       3300   // ADC reference, mV (measure it for best accuracy)
+#define AREF_MV       3307   // ADC reference, mV (3300 default) (measure it for best accuracy)
 
-#define VDIV_RTOP     270    // voltage divider: Vvs = V * RBOT / (RTOP + RBOT)
-#define VDIV_RBOT     15
+#define VDIV_RTOP     2717    // voltage divider: Vvs = V * RBOT / (RTOP + RBOT)
+#define VDIV_RBOT     150
 #define VAMP_RF       100    // voltage diff amp gain = RF / RIN (R19 / R20)
 #define VAMP_RIN      82
 
 #define SHUNT_MOHM    500    // current shunt, milliohms
-#define IAMP_RF       33     // current diff amp gain = RF / RIN (R11 / R9)
-#define IAMP_RIN      10
+#define IAMP_RF       3391     // (default 3300) current diff amp gain = RF / RIN (R11 / R9)
+#define IAMP_RIN      1000
 
 #define OFFSET_CH     7      // ADC channel of the offset reference (pin 22)
 
