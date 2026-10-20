@@ -1,0 +1,1550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team 07 Power Monitor</title>
+<!--
+  COMPSYS209 Team 07 - BLE power monitor app (Web Bluetooth).
+
+  This page does no measurement maths. It receives lines computed and formatted
+  by the ATmega (forwarded unchanged by the ESP32 bridge) and draws them:
+     A,<min>,<max>,<unit>          axis chosen by the ATmega
+     D,<t>,<Vrms>,<Irms>,<P>,<PF>  one reading
+  The only arithmetic here is placing received values onto screen pixels.
+
+  Open in Chrome or Edge (desktop or Android). Needs a secure origin:
+  https:// (e.g. GitHub Pages) or http://localhost. iPhone: use the Bluefy browser.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1b1f24;
+    --muted: #5d6673;
+    --line: #e1e5ea;
+    --accent: #0b6bcb;
+    --accent-ink: #ffffff;
+    --plot: #0b6bcb;
+    --plot-fill: rgba(11, 107, 203, 0.10);
+    --plot2: #c2410c;
+    --ok: #1a7f37;
+    --warn: #b35900;
+    --bad: #c62828;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216;
+      --panel: #171b21;
+      --ink: #e8ebef;
+      --muted: #98a2ae;
+      --line: #2a3038;
+      --accent: #4c9be8;
+      --accent-ink: #0f1216;
+      --plot: #5aa8f0;
+      --plot-fill: rgba(90, 168, 240, 0.14);
+      --plot2: #f59e5b;
+      --ok: #4ac26b;
+      --warn: #e3a04f;
+      --bad: #ef6b6b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1216; --panel: #171b21; --ink: #e8ebef; --muted: #98a2ae; --line: #2a3038;
+    --accent: #4c9be8; --accent-ink: #0f1216; --plot: #5aa8f0; --plot-fill: rgba(90,168,240,0.14); --plot2: #f59e5b;
+    --ok: #4ac26b; --warn: #e3a04f; --bad: #ef6b6b;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding-block: 20px 40px;
+         padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  select {
+    font: inherit; font-weight: 600; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink); padding: 8px 10px; border-radius: 8px;
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+
+  .tiles {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 14px;
+  }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font: 600 26px/1.2 var(--mono); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .unit { font-size: 14px; color: var(--muted); margin-left: 4px; font-family: system-ui, sans-serif; font-weight: 500; }
+  .tile.main { grid-column: span 2; }
+  .tile.main .value { color: var(--plot); }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; }
+  .panel h2 span { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .chart-wrap { position: relative; height: 300px; }
+  .tgrid { display: grid; grid-template-columns: minmax(130px, 1.4fr) repeat(5, minmax(0, 1fr)); gap: 6px 10px; align-items: baseline; }
+  .tgrid .th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tgrid .tn { font-weight: 600; font-size: 14px; }
+  .tgrid .tn small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .tgrid .tv { font: 600 18px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) {
+    .tgrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .tgrid .th0, .tgrid .tn { grid-column: 1 / -1; }
+    .tgrid .tv { font-size: 15px; }
+  }
+  #tTarget.ok { color: var(--ok); } #tTarget.bad { color: var(--bad); }
+  #wavePanel { display: none; }
+  #wavePanel.on { display: block; }
+  .wave-wrap { position: relative; height: 240px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; text-align: center; padding: 0 20px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row input[type=text] { flex: 1 1 200px; }
+  input[type=text] {
+    flex: 1; min-width: 0; font: 14px var(--mono);
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink);
+  }
+  pre#log {
+    margin: 10px 0 0; max-height: 180px; overflow: auto;
+    font: 12px/1.5 var(--mono); color: var(--muted);
+    background: var(--bg); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; word-break: break-all;
+  }
+  .note { font-size: 13px; color: var(--muted); }
+  #doomPanel { display: none; border-color: var(--bad); }
+  #doomPanel.on { display: block; }
+  .doom-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  .doom-stats { font: 600 15px var(--mono); }
+  .pad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 48px); gap: 6px; }
+  .pad button, .fire { padding: 0; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .fire { width: 112px; height: 102px; background: var(--bad); color: #fff; border-color: var(--bad); }
+  .doom-controls { display: flex; gap: 18px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  #oledWrap { display: none; margin-top: 12px; background: #000; border-radius: 6px; padding: 8px; border: 1px solid var(--line); }
+  #doomPanel.sim #oledWrap { display: block; }
+  #oled { display: block; width: 100%; max-width: 768px; aspect-ratio: 4 / 1; margin: 0 auto;
+          image-rendering: pixelated; image-rendering: crisp-edges; }
+  .sim-note { display: none; }
+  #doomPanel.sim .sim-note { display: block; }
+  #doomPanel.sim .board-note { display: none; }
+  .progress { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin: 12px 0 6px; border: 1px solid var(--line); }
+  #flashBar { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+  #flashBar.ok { background: var(--ok); }
+  #flashBar.bad { background: var(--bad); }
+  .flash-file { flex: 1 1 220px; align-self: center; font-family: var(--mono); overflow-wrap: anywhere; }
+  #flashMsg.bad { color: var(--bad); }
+  #flashMsg.ok { color: var(--ok); }
+  .warnbox {
+    display: none; border: 1px solid var(--warn); color: var(--ink);
+    background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Power Monitor</h1>
+      <div class="sub">Team 07 &middot; values computed on the ATmega, relayed by ESP32 over BLE</div>
+    </div>
+    <div class="controls">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="demoBtn" title="Replays built-in test data through the same parser">Demo</button>
+      <button id="fileBtn" title="Replay a text file of ATmega lines">Replay file</button>
+      <input id="fileIn" type="file" accept=".txt,.csv,.log,text/plain" hidden>
+      <select id="speedSel" title="Replay speed">
+        <option value="1000">1&times;</option>
+        <option value="200" selected>5&times;</option>
+        <option value="50">20&times;</option>
+      </select>
+      <button id="doomSimBtn" title="Play DOOM mode in the browser: the firmware's own C code compiled to WebAssembly">Try DOOM</button>
+      <button id="clearBtn">Clear</button>
+      <button id="csvBtn" title="Save every received line">Save CSV</button>
+    </div>
+  </header>
+
+  <div id="unsupported" class="warnbox">
+    This browser has no Web Bluetooth. Use Chrome or Edge on a laptop or Android phone
+    (or Bluefy on iPhone), opened from <b>https://</b> or <b>http://localhost</b>.
+  </div>
+
+  <div class="status" style="margin-bottom:14px"><span id="dot" class="dot"></span><span id="statusText">Not connected</span></div>
+
+  <section class="tiles">
+    <div class="tile main"><div class="label">Real power</div><div class="value"><span id="vP">&ndash;</span><span class="unit">W</span></div></div>
+    <div class="tile"><div class="label">Max power</div><div class="value"><span id="vMax">&ndash;</span><span class="unit">W</span></div></div>
+    <div class="tile"><div class="label">Min power</div><div class="value"><span id="vMin">&ndash;</span><span class="unit">W</span></div></div>
+    <div class="tile"><div class="label">Voltage RMS</div><div class="value"><span id="vV">&ndash;</span><span class="unit">V</span></div></div>
+    <div class="tile"><div class="label" id="lblI">Current RMS</div><div class="value"><span id="vI">&ndash;</span><span class="unit">A</span></div></div>
+    <div class="tile"><div class="label">Power factor</div><div class="value"><span id="vPF">&ndash;</span></div></div>
+    <div class="tile"><div class="label">Energy</div><div class="value"><span id="vE">&ndash;</span><span class="unit">Wh</span></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Power draw <span id="axisInfo">axis: waiting for ATmega</span></h2>
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+      <div id="empty" class="empty">Connect to the board, press Demo for built-in test data, or Replay a file.</div>
+    </div>
+  </section>
+
+  <section class="panel" id="wavePanel">
+    <h2>Waveform <span id="waveInfo">one period, as sent by the ATmega</span></h2>
+    <div class="wave-wrap"><canvas id="wave"></canvas></div>
+    <div class="legend"><span><i style="background:var(--plot)"></i>Voltage (mV, left axis)</span><span><i style="background:var(--plot2)"></i>Current (mA, right axis)</span></div>
+  </section>
+
+  <section class="panel" id="timingPanel">
+    <h2>Timing <span>measured when each line reaches this page</span></h2>
+    <div class="tgrid">
+      <div class="th th0"></div><div class="th">Last</div><div class="th">Average</div><div class="th">Min</div><div class="th">Max</div><div class="th">Count</div>
+      <div class="tn">Update interval<small>one data set to the next</small></div>
+      <div class="tv" id="tiLast">–</div><div class="tv" id="tiAvg">–</div><div class="tv" id="tiMin">–</div><div class="tv" id="tiMax">–</div><div class="tv" id="tiN">0</div>
+      <div class="tn">Send time<small>first byte to results line</small></div>
+      <div class="tv" id="tsLast">–</div><div class="tv" id="tsAvg">–</div><div class="tv" id="tsMin">–</div><div class="tv" id="tsMax">–</div><div class="tv" id="tsN">0</div>
+    </div>
+    <div class="row" style="margin-top:10px; align-items:center">
+      <span id="tTarget" class="note" style="flex:1 1 220px">Waiting for data. Target: a full data set in under 1 s.</span>
+      <button id="timingReset">Reset timing</button>
+    </div>
+    <p class="note" style="margin:8px 0 0">The ESP32 forwards data in Bluetooth packets, and with the low-power bridge settings
+      the link only exchanges packets every 100–200 ms, so a single value can be off by about that much. The average over many
+      data sets is reliable. For finer numbers, set <code>LOW_POWER 0</code> in the bridge sketch while debugging.</p>
+  </section>
+
+  <section class="panel" id="doomPanel">
+    <div class="doom-top">
+      <h2 style="margin:0">DOOM mode <span class="board-note">playing on the board's OLED</span><span class="sim-note">simulator: the firmware's own C code, running in your browser</span></h2>
+      <div class="doom-stats">Kills <span id="doomKills">0</span> &middot; HP <span id="doomHp">100</span></div>
+      <button id="doomExit">Exit DOOM</button>
+    </div>
+    <div id="oledWrap"><canvas id="oled" width="128" height="32" aria-label="Simulated 128 by 32 OLED"></canvas></div>
+    <div class="doom-controls">
+      <div class="pad">
+        <button data-key="q" aria-label="Strafe left">&#8676;</button>
+        <button data-key="w" aria-label="Forward">&#9650;</button>
+        <button data-key="e" aria-label="Strafe right">&#8677;</button>
+        <button data-key="a" aria-label="Turn left">&#9664;</button>
+        <button data-key="s" aria-label="Back">&#9660;</button>
+        <button data-key="d" aria-label="Turn right">&#9654;</button>
+      </div>
+      <button class="fire" data-key="f">FIRE</button>
+      <p class="note" style="margin:0">Keyboard: W A S D or arrows, Q / E strafe, Space fires.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Send to ATmega <span>bytes pass through the ESP32 unchanged</span></h2>
+    <div class="row">
+      <input id="sendText" type="text" placeholder="e.g. STATUS, HELP, CALV,13.00 or DOOM" autocomplete="off">
+      <button id="sendBtn" disabled>Send</button>
+      <button id="resetMMBtn" disabled title="Sends RESETMM; the ATmega clears its min/max">Reset min/max</button>
+    </div>
+    <pre id="log"></pre>
+  </section>
+
+  <section class="panel" id="flashPanel">
+    <h2>Flash ATmega <span>firmware over Bluetooth, written by the ESP32 over SPI</span></h2>
+    <div class="row">
+      <button id="hexBtn">Choose .hex</button>
+      <input id="hexIn" type="file" accept=".hex,.ihx" hidden>
+      <span id="hexInfo" class="note flash-file">No file chosen. Microchip Studio puts it in the project's Debug folder.</span>
+      <button id="backupBtn" disabled title="Read the program now on the ATmega and save it as a .hex file. Doesn't change the chip.">Back up chip</button>
+      <button id="flashBtn" class="primary" disabled>Flash</button>
+    </div>
+    <div class="progress"><div id="flashBar"></div></div>
+    <div id="flashMsg" class="note">Connect to the board and choose a .hex file.</div>
+  </section>
+
+  <p class="note">
+    Protocol: <code>A,min,max,unit</code> sets the graph axis &middot;
+    <code>D,t,Vrms,Irms,P,PF,E</code> is one reading &middot;
+    <code>M,Pmin,Pmax</code> is the ATmega's min/max power.
+    The team SMT_code line <code>Vrms 10618 mV, Imax 405 mA, P 2625 mW</code> and its <code>--- mV mA ---</code> sample block are understood too.
+    Unknown lines are shown in the log and ignored.
+  </p>
+</main>
+
+<script type="text/plain" id="testData">
+# test data: Team 07 power monitor, 1 reading/s, lines exactly as ble_report.c sends them
+BOOT,team07-1.0
+D,0.0,14.99,0.001,0.00,0.00,0.000
+D,1.0,15.00,0.000,0.00,0.00,0.000
+D,2.0,14.99,0.000,0.00,0.00,0.000
+A,0.00,8.00,W
+D,3.0,14.99,0.001,0.00,0.00,0.000
+D,4.0,15.02,0.000,0.00,0.00,0.000
+D,5.0,14.99,0.000,0.00,0.00,0.000
+D,6.0,14.97,0.000,0.00,0.00,0.000
+D,7.0,15.00,0.000,0.00,0.00,0.000
+D,8.0,14.96,0.001,0.00,0.00,0.000
+D,9.0,14.98,0.001,0.00,0.00,0.000
+A,0.00,8.00,W
+D,10.0,15.00,0.001,0.00,0.00,0.000
+D,11.0,15.02,0.001,0.00,0.00,0.000
+D,12.0,14.99,0.000,0.00,0.00,0.000
+D,13.0,15.00,0.001,0.00,0.00,0.000
+D,14.0,15.02,0.001,0.00,0.00,0.000
+D,15.0,13.02,0.261,3.40,1.00,0.000
+M,3.40,3.40
+D,16.0,13.03,0.263,3.44,1.00,0.001
+M,3.40,3.44
+D,17.0,13.04,0.263,3.44,1.00,0.002
+M,3.40,3.44
+D,18.0,12.99,0.264,3.43,1.00,0.003
+M,3.40,3.44
+D,19.0,13.00,0.264,3.43,1.00,0.004
+M,3.40,3.44
+A,0.00,8.00,W
+D,20.0,12.96,0.262,3.40,1.00,0.005
+M,3.40,3.44
+D,21.0,13.02,0.263,3.42,1.00,0.006
+M,3.40,3.44
+D,22.0,13.02,0.267,3.47,1.00,0.007
+M,3.40,3.47
+D,23.0,13.01,0.262,3.41,1.00,0.008
+M,3.40,3.47
+D,24.0,12.96,0.263,3.42,1.00,0.009
+M,3.40,3.47
+D,25.0,13.01,0.264,3.44,1.00,0.010
+M,3.40,3.47
+D,26.0,13.01,0.264,3.44,1.00,0.011
+M,3.40,3.47
+D,27.0,13.03,0.265,3.45,1.00,0.012
+M,3.40,3.47
+D,28.0,13.01,0.264,3.44,1.00,0.013
+M,3.40,3.47
+D,29.0,13.00,0.262,3.41,1.00,0.014
+M,3.40,3.47
+A,0.00,8.00,W
+D,30.0,13.01,0.265,3.43,0.99,0.015
+M,3.40,3.47
+D,31.0,13.02,0.264,3.44,1.00,0.016
+M,3.40,3.47
+D,32.0,13.01,0.267,3.46,1.00,0.017
+M,3.40,3.47
+D,33.0,12.98,0.264,3.43,1.00,0.018
+M,3.40,3.47
+D,34.0,12.97,0.263,3.42,1.00,0.019
+M,3.40,3.47
+D,35.0,12.93,0.264,3.43,1.00,0.020
+M,3.40,3.47
+D,36.0,13.00,0.265,3.45,1.00,0.020
+M,3.40,3.47
+D,37.0,13.01,0.262,3.42,1.00,0.021
+M,3.40,3.47
+D,38.0,12.98,0.263,3.42,1.00,0.022
+M,3.40,3.47
+D,39.0,13.02,0.265,3.46,1.00,0.023
+M,3.40,3.47
+A,0.00,8.00,W
+D,40.0,12.94,0.262,3.40,1.00,0.024
+M,3.40,3.47
+D,41.0,13.00,0.266,3.47,1.00,0.025
+M,3.40,3.47
+D,42.0,12.99,0.264,3.43,1.00,0.026
+M,3.40,3.47
+D,43.0,13.02,0.263,3.42,1.00,0.027
+M,3.40,3.47
+D,44.0,12.98,0.263,3.42,1.00,0.028
+M,3.40,3.47
+D,45.0,12.56,0.197,2.44,0.98,0.029
+M,2.44,3.47
+D,46.0,12.60,0.197,2.45,0.98,0.029
+M,2.44,3.47
+D,47.0,12.9
+D,48.0,12.61,0.197,2.44,0.98,0.030
+M,2.44,3.47
+D,49.0,12.59,0.198,2.44,0.98,0.031
+M,2.44,3.47
+A,0.00,8.00,W
+D,50.0,12.61,0.195,2.41,0.98,0.031
+M,2.41,3.47
+D,51.0,12.60,0.199,2.46,0.98,0.032
+M,2.41,3.47
+D,52.0,12.56,0.199,2.47,0.99,0.033
+M,2.41,3.47
+D,53.0,12.56,0.199,2.46,0.98,0.034
+M,2.41,3.47
+D,54.0,12.62,0.200,2.47,0.98,0.034
+M,2.41,3.47
+D,55.0,12.64,0.197,2.45,0.98,0.035
+M,2.41,3.47
+D,56.0,12.56,0.199,2.47,0.98,0.036
+M,2.41,3.47
+D,57.0,12.64,0.197,2.45,0.98,0.036
+M,2.41,3.47
+D,58.0,12.55,0.200,2.47,0.98,0.037
+M,2.41,3.47
+D,59.0,12.61,0.199,2.46,0.98,0.038
+M,2.41,3.47
+A,0.00,8.00,W
+D,60.0,12.65,0.197,2.46,0.98,0.038
+M,2.41,3.47
+D,61.0,12.55,0.197,2.42,0.98,0.039
+M,2.41,3.47
+D,62.0,12.59,0.199,2.46,0.98,0.040
+M,2.41,3.47
+D,63.0,12.58,0.199,2.46,0.98,0.040
+M,2.41,3.47
+D,64.0,12.61,0.198,2.46,0.98,0.041
+M,2.41,3.47
+D,65.0,12.59,0.197,2.44,0.98,0.042
+M,2.41,3.47
+D,66.0,12.64,0.199,2.47,0.98,0.042
+M,2.41,3.47
+D,67.0,12.60,0.197,2.43,0.98,0.043
+M,2.41,3.47
+D,68.0,12.64,0.199,2.47,0.98,0.044
+M,2.41,3.47
+D,69.0,12.60,0.195,2.42,0.98,0.044
+M,2.41,3.47
+A,0.00,8.00,W
+D,70.0,15.32,0.483,7.23,0.98,0.046
+M,2.41,7.23
+D,71.0,15.37,0.485,7.31,0.98,0.048
+M,2.41,7.31
+D,72.0,15.42,0.487,7.36,0.98,0.051
+M,2.41,7.36
+D,73.0,15.41,0.487,7.36,0.98,0.053
+M,2.41,7.36
+D,74.0,15.43,0.486,7.35,0.98,0.055
+M,2.41,7.36
+D,75.0,15.38,0.488,7.33,0.98,0.057
+M,2.41,7.36
+D,76.0,15.38,0.487,7.36,0.98,0.059
+M,2.41,7.36
+D,77.0,15.38,0.486,7.30,0.98,0.061
+M,2.41,7.36
+D,78.0,15.43,0.490,7.38,0.98,0.063
+M,2.41,7.38
+D,79.0,15.41,0.483,7.32,0.98,0.065
+M,2.41,7.38
+A,0.00,8.00,W
+D,80.0,15.44,0.487,7.43,0.99,0.067
+M,2.41,7.43
+D,81.0,15.43,0.488,7.41,0.98,0.069
+M,2.41,7.43
+D,82.0,15.43,0.485,7.40,0.99,0.071
+M,2.41,7.43
+D,83.0,15.39,0.489,7.39,0.98,0.073
+M,2.41,7.43
+D,84.0,15.44,0.483,7.32,0.98,0.075
+M,2.41,7.43
+D,85.0,15.41,0.486,7.35,0.98,0.077
+M,2.41,7.43
+D,86.0,15.39,0.491,7.39,0.98,0.079
+M,2.41,7.43
+D,87.0,15.40,0.487,7.38,0.98,0.081
+M,2.41,7.43
+D,88.0,15.41,0.490,7.38,0.98,0.083
+M,2.41,7.43
+D,89.0,15.38,0.489,7.35,0.98,0.085
+M,2.41,7.43
+A,0.00,8.00,W
+D,90.0,15.44,0.490,7.46,0.98,0.087
+M,2.41,7.46
+D,91.0,15.39,0.490,7.41,0.98,0.089
+M,2.41,7.46
+D,92.0,15.47,0.488,7.35,0.97,0.091
+M,2.41,7.46
+D,93.0,15.43,0.486,7.33,0.98,0.094
+M,2.41,7.46
+D,94.0,15.40,0.487,7.34,0.98,0.096
+M,2.41,7.46
+D,95.0,14.01,0.428,4.80,0.80,0.097
+M,2.41,7.46
+D,96.0,13.95,0.428,4.81,0.81,0.098
+M,2.41,7.46
+D,97.0,14.00,0.428,4.80,0.80,0.100
+M,2.41,7.46
+D,98.0,13.98,0.428,4.79,0.80,0.101
+M,2.41,7.46
+D,99.0,13.97,0.428,4.79,0.80,0.102
+M,2.41,7.46
+A,0.00,8.00,W
+D,100.0,14.00,0.431,4.85,0.80,0.104
+M,2.41,7.46
+D,101.0,13.95,0.428,4.79,0.80,0.105
+M,2.41,7.46
+D,102.0,14.06,0.426,4.81,0.80,0.106
+M,2.41,7.46
+D,103.0,13.99,0.429,4.79,0.80,0.108
+M,2.41,7.46
+D,104.0,14.05,0.429,4.84,0.80,0.109
+M,2.41,7.46
+D,105.0,14.01,0.428,4.83,0.80,0.110
+M,2.41,7.46
+D,106.0,14.04,0.427,4.81,0.80,0.112
+M,2.41,7.46
+D,107.0,14.03,0.428,4.79,0.80,0.113
+M,2.41,7.46
+D,108.0,13.99,0.430,4.79,0.80,0.114
+M,2.41,7.46
+D,109.0,14.01,0.423,4.75,0.80,0.116
+M,2.41,7.46
+A,0.00,8.00,W
+D,110.0,13.99,0.432,4.84,0.80,0.117
+M,2.41,7.46
+D,111.0,13.96,0.422,4.76,0.81,0.118
+M,2.41,7.46
+D,112.0,13.96,0.433,4.82,0.80,0.120
+M,2.41,7.46
+D,113.0,13.94,0.428,4.79,0.80,0.121
+M,2.41,7.46
+D,114.0,14.02,0.429,4.81,0.80,0.122
+M,2.41,7.46
+D,115.0,14.02,0.428,4.81,0.80,0.124
+M,2.41,7.46
+D,116.0,13.99,0.426,4.78,0.80,0.125
+M,2.41,7.46
+D,117.0,13.97,0.425,4.74,0.80,0.126
+M,2.41,7.46
+D,118.0,13.99,0.425,4.75,0.80,0.128
+M,2.41,7.46
+D,119.0,13.98,0.422,4.70,0.80,0.129
+M,2.41,7.46
+A,0.00,8.00,W
+D,120.0,14.22,0.658,9.03,0.96,0.131
+M,2.41,9.03
+D,121.0,14.25,0.663,9.17,0.97,0.134
+M,2.41,9.17
+D,122.0,14.25,0.657,9.12,0.97,0.136
+M,2.41,9.17
+D,123.0,14.17,0.649,8.89,0.97,0.139
+M,2.41,9.17
+D,124.0,14.18,0.659,9.04,0.97,0.141
+M,2.41,9.17
+D,125.0,14.18,0.652,8.99,0.97,0.144
+M,2.41,9.17
+D,126.0,14.17,0.655,9.01,0.97,0.146
+M,2.41,9.17
+D,127.0,14.21,0.657,9.09,0.97,0.149
+M,2.41,9.17
+BOOT,team07-1.0
+A,0.00,8.00,W
+D,0.0,13.50,0.371,4.97,0.99,0.000
+M,4.97,4.97
+D,1.0,13.47,0.373,4.99,0.99,0.001
+M,4.97,4.99
+D,2.0,13.54,0.370,4.95,0.99,0.002
+M,4.95,4.99
+D,3.0,13.49,0.367,4.88,0.98,0.004
+M,4.88,4.99
+D,4.0,13.52,0.372,4.98,0.99,0.005
+M,4.88,4.99
+D,5.0,13.50,0.370,4.97,0.99,0.006
+M,4.88,4.99
+D,6.0,13.47,0.369,4.95,0.99,0.008
+M,4.88,4.99
+D,7.0,13.54,0.371,4.98,0.99,0.009
+M,4.88,4.99
+D,8.0,13.49,0.368,4.93,0.99,0.011
+M,4.88,4.99
+D,9.0,13.55,0.372,5.01,0.99,0.012
+M,4.88,5.01
+A,0.00,8.00,W
+D,10.0,13.50,0.373,4.98,0.99,0.013
+M,4.88,5.01
+D,11.0,13.54,0.365,4.88,0.99,0.015
+M,4.88,5.01
+D,12.0,13.45,0.370,4.95,0.99,0.016
+M,4.88,5.01
+D,13.0,13.50,0.368,4.96,1.00,0.017
+M,4.88,5.01
+D,14.0,13.53,0.372,5.00,0.99,0.019
+M,4.88,5.01
+D,15.0,13.51,0.368,4.91,0.99,0.020
+M,4.88,5.01
+D,16.0,13.50,0.371,4.96,0.99,0.022
+M,4.88,5.01
+D,17.0,13.47,0.370,4.93,0.99,0.023
+M,4.88,5.01
+D,18.0,13.50,0.370,4.93,0.99,0.024
+M,4.88,5.01
+D,19.0,13.47,0.371,4.96,0.99,0.026
+M,4.88,5.01
+A,0.00,8.00,W
+D,20.0,13.48,0.372,4.99,0.99,0.027
+M,4.88,5.01
+D,21.0,13.50,0.369,4.95,0.99,0.028
+M,4.88,5.01
+D,22.0,13.52,0.372,5.00,0.99,0.030
+M,4.88,5.01
+D,23.0,13.46,0.366,4.87,0.99,0.031
+M,4.87,5.01
+D,24.0,13.48,0.373,5.00,0.99,0.033
+M,4.87,5.01
+D,25.0,13.48,0.373,4.98,0.99,0.034
+M,4.87,5.01
+D,26.0,13.52,0.371,4.97,0.99,0.035
+M,4.87,5.01
+D,27.0,13.49,0.369,4.93,0.99,0.037
+M,4.87,5.01
+D,28.0,13.50,0.370,4.94,0.99,0.038
+M,4.87,5.01
+D,29.0,13.50,0.367,4.93,0.99,0.039
+M,4.87,5.01
+</script>
+
+<script id="avrFlashModule">
+// ---------- AVR flashing: Intel HEX parser + programmer protocol ----------
+// No Bluetooth or page code in here, so test/isp_sim/run_app_test.js can run it
+// against the simulated ATmega. The ESP32 side is esp32_ble_bridge/avr_isp.h.
+const AvrFlash = (() => {
+  const FLASH_BYTES = 32768, PAGE = 128;
+  const CHIPS = { '1e950f': 'ATmega328P', '1e9516': 'ATmega328PB' };
+  const STATUS = ['ok', 'no answer from the ATmega', 'verify failed', 'bad request', 'chip stayed busy'];
+
+  function parseHex(text) {
+    const image = new Uint8Array(FLASH_BYTES).fill(0xFF);
+    let base = 0, end = 0, dataBytes = 0, sawEof = false;
+    const lines = text.split(/\r?\n/);
+    for (let n = 0; n < lines.length; n++) {
+      const l = lines[n].trim();
+      if (!l) continue;
+      const where = 'line ' + (n + 1);
+      if (l[0] !== ':' || l.length < 11 || l.length % 2 === 0 || /[^0-9a-f]/i.test(l.slice(1)))
+        throw new Error(where + ' is not an Intel HEX record');
+      const b = [];
+      for (let i = 1; i < l.length; i += 2) b.push(parseInt(l.substr(i, 2), 16));
+      const len = b[0], addr = (b[1] << 8) | b[2], type = b[3];
+      if (b.length !== len + 5) throw new Error(where + ': length does not match');
+      if ((b.reduce((a, x) => a + x, 0) & 0xFF) !== 0) throw new Error(where + ': checksum error');
+      if (type === 0x00) {
+        const at = base + addr;
+        if (at + len > FLASH_BYTES)
+          throw new Error(where + ': address 0x' + at.toString(16) + ' is beyond the 32 KB flash (is this the .eep EEPROM file?)');
+        for (let i = 0; i < len; i++) image[at + i] = b[4 + i];
+        end = Math.max(end, at + len);
+        dataBytes += len;
+      } else if (type === 0x01) { sawEof = true; break; }
+      else if (type === 0x02) base = ((b[4] << 8) | b[5]) << 4;
+      else if (type === 0x04) base = ((b[4] << 8) | b[5]) << 16;
+      // 0x03 / 0x05 (start address) are not needed for an AVR
+    }
+    if (!sawEof) throw new Error('file is incomplete (no end-of-file record)');
+    if (!dataBytes) throw new Error('file contains no program data');
+    const pages = [];
+    for (let a = 0; a < end; a += PAGE)
+      if (image.subarray(a, a + PAGE).some(x => x !== 0xFF)) pages.push(a);
+    return { image, bytes: end, dataBytes, pages };
+  }
+
+  // io.call(Uint8Array) -> Promise<Uint8Array reply>; report(fraction, text)
+  async function flash(prog, io, report) {
+    const t0 = Date.now();
+    const check = (r, op) => {
+      if (!r || r[0] !== op.charCodeAt(0)) throw new Error('unexpected reply from the ESP32');
+      if (r[1] !== 0) throw new Error(STATUS[r[1]] || ('error ' + r[1]));
+      return r;
+    };
+    const hex2 = x => x.toString(16).padStart(2, '0');
+    let chunked = false;
+    try {
+      report(0, 'Holding the ATmega in reset, entering programming mode…');
+      const e = await io.call(Uint8Array.of(0x45));                        // 'E'
+      if (e[1] === 1) throw new Error('no answer from the ATmega: check RESET, MOSI, MISO, SCK, GND and that it is powered');
+      check(e, 'E');
+      const sig = hex2(e[2]) + hex2(e[3]) + hex2(e[4]);
+      const chip = CHIPS[sig];
+      if (!chip) throw new Error('unknown chip signature ' + sig + ' (expected 1e950f or 1e9516): check the SPI wiring');
+      const f = check(await io.call(Uint8Array.of(0x46)), 'F');            // 'F'
+      const div8 = (f[2] & 0x80) === 0;
+      const info = { chip, signature: sig, lowFuse: f[2], highFuse: f[3], extFuse: f[4], lock: f[5], ckdiv8: div8, slowClock: e[5] > 2 };
+      report(0.02, `${chip} found (fuses L ${hex2(f[2])} H ${hex2(f[3])} E ${hex2(f[4])}, CKDIV8 ${div8 ? 'on' : 'OFF'}). Erasing…`);
+
+      check(await io.call(Uint8Array.of(0x58)), 'X');                      // 'X'
+
+      for (let i = 0; i < prog.pages.length; i++) {
+        const a = prog.pages[i];
+        const data = prog.image.subarray(a, a + PAGE);
+        let r = null;
+        if (!chunked) {
+          try {
+            r = await io.call(Uint8Array.of(0x50, a & 0xFF, a >> 8, ...data));   // 'P' whole page
+          } catch (err) {
+            if (err.fatal) throw err;
+            chunked = true;            // link can't carry 131 bytes: send it in pieces
+          }
+        }
+        if (chunked) {
+          for (let off = 0; off < PAGE; off += 16)
+            check(await io.call(Uint8Array.of(0x4C, off, ...data.subarray(off, off + 16))), 'L');
+          r = await io.call(Uint8Array.of(0x57, a & 0xFF, a >> 8));           // 'W'
+        }
+        if (r[1] === 2) throw new Error('verify failed at 0x' + a.toString(16).padStart(4, '0') + ': the page read back differently (check the MISO divider and SCK wiring)');
+        check(r, chunked ? 'W' : 'P');
+        report(0.03 + 0.95 * (i + 1) / prog.pages.length,
+               `Writing ${i + 1} / ${prog.pages.length} pages (${Math.round((i + 1) * PAGE / 1024 * 10) / 10} KB)`);
+      }
+      check(await io.call(Uint8Array.of(0x51)), 'Q');                      // 'Q'
+      info.ms = Date.now() - t0;
+      info.chunked = chunked;
+      return info;
+    } catch (err) {
+      try { await io.call(Uint8Array.of(0x51)); } catch (_) {}            // always let the ATmega run again
+      throw err;
+    }
+  }
+
+  // Read the whole flash (for a backup). The ATmega is held in reset while it is
+  // read and restarts afterwards; its program is not changed.
+  async function readFlash(io, report) {
+    const t0 = Date.now();
+    const check = (r, op) => {
+      if (!r || r[0] !== op.charCodeAt(0)) throw new Error('unexpected reply from the ESP32');
+      if (r[1] !== 0) throw new Error(STATUS[r[1]] || ('error ' + r[1]));
+      return r;
+    };
+    const hex2 = x => x.toString(16).padStart(2, '0');
+    const image = new Uint8Array(FLASH_BYTES).fill(0xFF);
+    try {
+      report(0, 'Holding the ATmega in reset, entering programming mode…');
+      const e = await io.call(Uint8Array.of(0x45));
+      if (e[1] === 1) throw new Error('no answer from the ATmega: check RESET, MOSI, MISO, SCK, GND and that it is powered');
+      check(e, 'E');
+      const sig = hex2(e[2]) + hex2(e[3]) + hex2(e[4]);
+      const chip = CHIPS[sig];
+      if (!chip) throw new Error('unknown chip signature ' + sig + ': check the SPI wiring');
+      const f = check(await io.call(Uint8Array.of(0x46)), 'F');
+      const locked = (f[5] & 0x03) !== 0x03;          // lock bits block reading
+      if (locked) throw new Error('the chip is read-protected (lock bits ' + hex2(f[5]) + '), so its program cannot be read back');
+      let n = 128;
+      for (let a = 0; a < FLASH_BYTES; ) {
+        let r = check(await io.call(Uint8Array.of(0x52, a & 0xFF, a >> 8, n)), 'R');
+        if (r.length < 4 + n) {                        // link cut the reply short: use smaller reads
+          if (n === 16) throw new Error('replies from the ESP32 are being cut short');
+          n = 16;
+          continue;
+        }
+        image.set(r.subarray(4, 4 + n), a);
+        a += n;
+        if (a % 1024 === 0) report(a / FLASH_BYTES, `Reading ${a / 1024} / 32 KB`);
+      }
+      check(await io.call(Uint8Array.of(0x51)), 'Q');
+      let end = FLASH_BYTES;
+      while (end > 0 && image[end - 1] === 0xFF) end--;
+      return { image, used: end, chip, signature: sig, lowFuse: f[2], highFuse: f[3], extFuse: f[4], lock: f[5], ms: Date.now() - t0 };
+    } catch (err) {
+      try { await io.call(Uint8Array.of(0x51)); } catch (_) {}
+      throw err;
+    }
+  }
+
+  // Intel HEX text for an image (blank 0xFF lines left out, like a compiler's .hex)
+  function toHex(image) {
+    const out = [];
+    for (let a = 0; a < image.length; a += 16) {
+      const d = image.subarray(a, a + 16);
+      if (d.every(x => x === 0xFF)) continue;
+      const b = [d.length, (a >> 8) & 0xFF, a & 0xFF, 0, ...d];
+      b.push((-b.reduce((x, y) => x + y, 0)) & 0xFF);
+      out.push(':' + b.map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase());
+    }
+    out.push(':00000001FF');
+    return out.join('\r\n') + '\r\n';
+  }
+
+  // -1 if identical, else the first differing byte address
+  function firstDifference(a, b) {
+    for (let i = 0; i < FLASH_BYTES; i++) if (a[i] !== b[i]) return i;
+    return -1;
+  }
+
+  // Request/reply over BLE. A call finishes only when BOTH the write has been
+  // acknowledged AND the reply notification has arrived: Chrome allows one GATT
+  // operation at a time, and the reply can arrive before the write is confirmed.
+  const fatal = msg => Object.assign(new Error(msg), { fatal: true });
+  function makeIo(write, timeoutMs = 8000) {
+    let waiting = null;
+    return {
+      notify(r) { if (waiting && r.length && r[0] === waiting.op) waiting.reply(r); },   // stray/late replies ignored
+      cancel(err) { if (waiting) waiting.fail(err); },
+      call(bytes) {
+        return new Promise((resolve, reject) => {
+          let reply = null, written = false, done = false;
+          const finish = (fn, v) => { if (done) return; done = true; clearTimeout(timer); waiting = null; fn(v); };
+          const timer = setTimeout(() => finish(reject, fatal('no reply from the ESP32 (timed out)')), timeoutMs);
+          waiting = { op: bytes[0], reply: r => { reply = r; if (written) finish(resolve, r); }, fail: e => finish(reject, e) };
+          Promise.resolve().then(() => write(bytes)).then(
+            () => { written = true; if (reply) finish(resolve, reply); },
+            e => finish(reject, e));
+        });
+      },
+    };
+  }
+
+  return { parseHex, flash, readFlash, toHex, firstDifference, makeIo, fatal, PAGE };
+})();
+</script>
+
+<script>
+(() => {
+  const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+  const NUS_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // app -> ESP32 (write)
+  const NUS_TX      = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 -> app (notify)
+  const ISP_CHAR    = '6e400010-b5a3-f393-e0a9-e50e24dcca9e'; // programmer (write + notify)
+  const MAX_POINTS  = 120;   // how many readings stay on screen
+  const MAX_LOG     = 60;
+
+  const $ = id => document.getElementById(id);
+  const ui = {
+    connect: $('connectBtn'), demo: $('demoBtn'), clear: $('clearBtn'), csv: $('csvBtn'),
+    send: $('sendBtn'), sendText: $('sendText'), log: $('log'),
+    dot: $('dot'), status: $('statusText'), empty: $('empty'), axisInfo: $('axisInfo'),
+    vP: $('vP'), vMax: $('vMax'), vMin: $('vMin'), resetMM: $('resetMMBtn'), vV: $('vV'), vI: $('vI'), vPF: $('vPF'), vE: $('vE'), canvas: $('chart'),
+  };
+
+  const state = {
+    device: null, rxChar: null, ispChar: null,
+    axis: null,                 // {min, max, minText, maxText, unit} from the ATmega
+    mm: null,                   // {min, max, minText, maxText} min/max power from the ATmega
+    points: [],                 // [{t, tText, p}]
+    rawLines: [],               // everything received, for CSV
+    logLines: [],
+    partial: '',                // reassembles lines split across BLE packets
+    demoTimer: null,
+  };
+
+  if (!navigator.bluetooth) {
+    $('unsupported').style.display = 'block';
+    ui.connect.disabled = true;
+  }
+
+  // ---------- status / log ----------
+  function setStatus(text, kind) {
+    ui.status.textContent = text;
+    ui.dot.className = 'dot' + (kind ? ' ' + kind : '');
+  }
+  function log(line) {
+    state.logLines.push(line);
+    if (state.logLines.length > MAX_LOG) state.logLines.shift();
+    ui.log.textContent = state.logLines.join('\n');
+    ui.log.scrollTop = ui.log.scrollHeight;
+  }
+
+  // ---------- line parsing (no maths: values are shown as received) ----------
+  function feedText(text) {
+    if (text.length) timingChunk();
+    state.partial += text;
+    let nl;
+    while ((nl = state.partial.indexOf('\n')) >= 0) {
+      const line = state.partial.slice(0, nl).replace(/\r$/, '').trim();
+      state.partial = state.partial.slice(nl + 1);
+      if (line) handleLine(line);
+    }
+    if (state.partial.length > 256) state.partial = '';   // garbage guard
+  }
+
+  // ---- team SMT_code format (t-shaw374/209_group7_2026, main.c) ----
+  //   "Vrms 10618 mV, Imax 405 mA, P 2625 mW"   one result per capture
+  //   "--- mV mA ---" then lines "v i"           one period of samples (debug build)
+  //   "--- raw counts ---" then lines "v i"      raw ADC counts (shown in the log only)
+  //   "No signal"
+  // Values arrive in milli-units; the app only moves the decimal point to show them.
+  const TEAM_RE = /^Vrms\s+(-?\d+)\s*mV,\s*Imax\s+(-?\d+)\s*mA,\s*P\s+(-?\d+)\s*mW$/;
+  const milli = (txt, dp) => (Number(txt) / 1000).toFixed(dp);   // "10618" -> "10.62" (units only)
+  state.block = null;          // {kind: 'mv' | 'raw', v: [], i: []} while a sample block arrives
+  state.wave = null;           // last complete mV/mA block
+  state.teamT0 = null;
+  state.replayT = null;        // replay supplies its own clock (1 s per reading)
+
+  // ---- timing of data sets (for debugging the ATmega's update rate) ----
+  // A data set ends with a results line ("Vrms ..." or "D,..."). Times are taken
+  // with performance.now() when text reaches the page; nothing here touches the values.
+  const timing = { firstAt: null, lastSetAt: null, iv: [], sd: [] };
+  const fmtMs = ms => ms >= 1000 ? (ms / 1000).toFixed(2) + ' s' : Math.round(ms) + ' ms';
+  function statsShow(arr, prefix) {
+    const n = arr.length;
+    $(prefix + 'N').textContent = n;
+    if (!n) { ['Last', 'Avg', 'Min', 'Max'].forEach(k => $(prefix + k).textContent = '–'); return; }
+    let sum = 0, mn = Infinity, mx = -Infinity;
+    for (const x of arr) { sum += x; if (x < mn) mn = x; if (x > mx) mx = x; }
+    $(prefix + 'Last').textContent = fmtMs(arr[n - 1]);
+    $(prefix + 'Avg').textContent = fmtMs(sum / n);
+    $(prefix + 'Min').textContent = fmtMs(mn);
+    $(prefix + 'Max').textContent = fmtMs(mx);
+    return sum / n;
+  }
+  function timingShow() {
+    const avg = statsShow(timing.iv, 'ti');
+    statsShow(timing.sd, 'ts');
+    const el = $('tTarget');
+    if (avg === undefined) { el.className = 'note'; el.textContent = 'Waiting for two data sets. Target: a full data set in under 1 s.'; return; }
+    const okay = avg < 1000;
+    el.className = 'note ' + (okay ? 'ok' : 'bad');
+    el.textContent = `Average update every ${fmtMs(avg)}: ${okay ? 'under' : 'over'} the 1 s target` +
+                     (okay ? '.' : ` by ${fmtMs(avg - 1000)}.`);
+  }
+  function timingReset() {
+    timing.firstAt = null; timing.lastSetAt = null; timing.iv = []; timing.sd = [];
+    timingShow();
+  }
+  function timingChunk() {                       // any text arrived from the board
+    if (timing.firstAt === null) timing.firstAt = performance.now();
+  }
+  function timingDataSet() {                     // a results line just completed
+    if (state.demoTimer) return;                 // replay/demo timing is not the board's
+    const now = performance.now();
+    if (timing.lastSetAt !== null) timing.iv.push(now - timing.lastSetAt);
+    if (timing.firstAt !== null) timing.sd.push(now - timing.firstAt);
+    timing.lastSetAt = now;
+    // text already received after the results line belongs to the next data set
+    timing.firstAt = state.partial.length ? now : null;
+    timingShow();
+  }
+  $('timingReset').addEventListener('click', timingReset);
+
+  function endBlock() {
+    const b = state.block;
+    if (!b) return;
+    state.block = null;
+    log(`← (${b.v.length} ${b.kind === 'mv' ? 'mV / mA' : 'raw count'} sample lines)`);
+    if (b.kind === 'mv' && b.v.length >= 8) { state.wave = b; drawWave(); }
+  }
+
+  function handleTeamLine(line) {
+    const m = TEAM_RE.exec(line);
+    if (m) {
+      endBlock();
+      timingDataSet();
+      log('← ' + line);
+      const [, vmv, ima, pmw] = m;
+      const now = state.replayT !== null ? state.replayT : performance.now() / 1000;
+      if (state.teamT0 === null) state.teamT0 = now;
+      const t = now - state.teamT0;
+      const p = Number(pmw) / 1000;                       // only used to place the point
+      state.points.push({ t, tText: t.toFixed(1), p });
+      if (state.points.length > MAX_POINTS) state.points.shift();
+      if (!state.axis) { state.axis = { min: 0, max: 8, minText: '0', maxText: '8', unit: 'W' };
+                         ui.axisInfo.textContent = 'axis 0–8 W (rated 7.5 VA)'; }
+      $('lblI').textContent = 'Current peak';
+      ui.vV.textContent = milli(vmv, 2);
+      ui.vI.textContent = milli(ima, 3);
+      ui.vP.textContent = milli(pmw, 2);
+      ui.vPF.textContent = '–';
+      ui.vE.textContent = '–';
+      // min / max of the values received (a comparison, no arithmetic on them)
+      const txt = milli(pmw, 2);
+      if (!state.mm) state.mm = { min: p, max: p, minText: txt, maxText: txt };
+      if (p < state.mm.min) Object.assign(state.mm, { min: p, minText: txt });
+      if (p > state.mm.max) Object.assign(state.mm, { max: p, maxText: txt });
+      ui.vMin.textContent = state.mm.minText;
+      ui.vMax.textContent = state.mm.maxText;
+      state.rawLines.push(line);
+      draw();
+      return true;
+    }
+    if (line === '--- mV mA ---' || line === '--- raw counts ---') {
+      endBlock();
+      log('← ' + line);
+      state.block = { kind: line.includes('mV') ? 'mv' : 'raw', v: [], i: [] };
+      state.rawLines.push(line);
+      return true;
+    }
+    if (state.block) {
+      const n = line.split(/[\s,;]+/).filter(Boolean);
+      if ((n.length === 2 || n.length === 3) && n.every(x => /^-?\d+$/.test(x))) {
+        state.block.v.push(Number(n[n.length - 2]));
+        state.block.i.push(Number(n[n.length - 1]));
+        state.rawLines.push(line);
+        return true;
+      }
+      endBlock();                                          // anything else ends the block
+    }
+    if (line === 'No signal') {
+      log('← ' + line);
+      ui.vP.textContent = ui.vV.textContent = ui.vI.textContent = '–';
+      setStatus('ATmega: no signal (check the AC source)', 'warn');
+      state.rawLines.push(line);
+      return true;
+    }
+    return false;
+  }
+
+  function handleLine(line) {
+    if (handleTeamLine(line)) return;
+    log('← ' + line);
+    const f = line.split(',');
+    if (line === 'OK,DOOM') { if (sim.on) simStop(); setDoom(true); return; }
+    if (line === 'OK,EXIT') { setDoom(false); return; }
+    if (f[0] === 'DOOM') {                                   // DOOM,kill,kills=3,hp=70
+      f.slice(2).forEach(kv => {
+        const [k, v] = kv.split('=');
+        if (k === 'kills') $('doomKills').textContent = v;
+        if (k === 'hp') $('doomHp').textContent = v;
+      });
+      if (f[1] === 'dead') $('doomHp').textContent = '0 (press FIRE)';
+      return;
+    }
+    if (f[0] === 'A' && f.length >= 3) {
+      const min = parseFloat(f[1]), max = parseFloat(f[2]);
+      if (isFinite(min) && isFinite(max) && max > min) {
+        state.axis = { min, max, minText: f[1], maxText: f[2], unit: f[3] || '' };
+        ui.axisInfo.textContent = `axis ${f[1]}–${f[2]} ${state.axis.unit} (set by ATmega)`;
+        draw();
+      }
+      state.rawLines.push(line);
+    } else if (f[0] === 'D' && f.length >= 5) {
+      timingDataSet();
+      const t = parseFloat(f[1]), p = parseFloat(f[4]);
+      if (!isFinite(t) || !isFinite(p)) return;
+      const last = state.points[state.points.length - 1];
+      if (last && t < last.t) state.points = [];         // ATmega restarted
+      state.points.push({ t, tText: f[1], p });
+      if (state.points.length > MAX_POINTS) state.points.shift();
+      ui.vV.textContent = f[2];
+      ui.vI.textContent = f[3];
+      ui.vP.textContent = f[4];
+      ui.vPF.textContent = f[5] !== undefined ? f[5] : '–';
+      ui.vE.textContent = f[6] !== undefined ? f[6] : '–';
+      state.rawLines.push(line);
+      draw();
+    } else if (f[0] === 'M' && f.length >= 3) {
+      // min/max are tracked on the ATmega; the app only displays them
+      const min = parseFloat(f[1]), max = parseFloat(f[2]);
+      if (!isFinite(min) || !isFinite(max)) return;
+      state.mm = { min, max, minText: f[1], maxText: f[2] };
+      ui.vMin.textContent = f[1];
+      ui.vMax.textContent = f[2];
+      state.rawLines.push(line);
+      draw();
+    }
+  }
+
+  // ---------- chart ----------
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function draw() {
+    const c = ui.canvas, dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+
+    ui.empty.style.display = state.points.length ? 'none' : 'flex';
+    if (!state.points.length) return;
+
+    const axis = state.axis || { min: 0, max: 10, minText: '0', maxText: '10', unit: 'W' };
+    if (!state.axis) ui.axisInfo.textContent = 'axis: default 0–10 W (ATmega has not sent A,...)';
+
+    const padL = 52, padR = 12, padT = 10, padB = 26;
+    const pw = w - padL - padR, ph = h - padT - padB;
+    const pts = state.points;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const xOf = t => padL + (t1 === t0 ? pw : (t - t0) / (t1 - t0) * pw);
+    const yOf = v => {
+      const clamped = Math.min(axis.max, Math.max(axis.min, v));
+      return padT + ph - (clamped - axis.min) / (axis.max - axis.min) * ph;
+    };
+
+    // grid (no computed tick values: only the ATmega's min/max are labelled)
+    g.strokeStyle = css('--line'); g.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      const y = Math.round(padT + ph * k / 4) + 0.5;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+    }
+    g.fillStyle = css('--muted'); g.font = '12px ' + css('--mono');
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(axis.maxText + ' ' + axis.unit, padL - 6, padT + 1);
+    g.fillText(axis.minText + ' ' + axis.unit, padL - 6, padT + ph);
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillText('t=' + pts[0].tText, padL, padT + ph + 8);
+    g.textAlign = 'right';
+    g.fillText('t=' + pts[pts.length - 1].tText, padL + pw, padT + ph + 8);
+
+    // min / max reference lines (values from the ATmega's M,... line)
+    if (state.mm) {
+      g.save();
+      g.setLineDash([5, 4]); g.strokeStyle = css('--muted'); g.lineWidth = 1;
+      g.fillStyle = css('--muted'); g.font = '11px ' + css('--mono'); g.textAlign = 'left';
+      [['max', state.mm.max, state.mm.maxText], ['min', state.mm.min, state.mm.minText]].forEach(([name, v, txt]) => {
+        const y = Math.round(yOf(v)) + 0.5;
+        g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+        // label above the max line / below the min line, unless that would leave the plot
+        const above = name === 'max' ? y - 16 > padT : y + 16 > padT + ph;
+        g.textBaseline = above ? 'bottom' : 'top';
+        g.fillText(name + ' ' + txt, padL + 6, above ? y - 3 : y + 3);
+      });
+      g.restore();
+    }
+
+    // area + line
+    const color = css('--plot');
+    g.beginPath();
+    pts.forEach((pt, i) => i ? g.lineTo(xOf(pt.t), yOf(pt.p)) : g.moveTo(xOf(pt.t), yOf(pt.p)));
+    g.lineTo(xOf(t1), padT + ph); g.lineTo(xOf(t0), padT + ph); g.closePath();
+    g.fillStyle = css('--plot-fill'); g.fill();
+
+    g.beginPath();
+    pts.forEach((pt, i) => i ? g.lineTo(xOf(pt.t), yOf(pt.p)) : g.moveTo(xOf(pt.t), yOf(pt.p)));
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+
+    const lp = pts[pts.length - 1];
+    g.beginPath(); g.arc(xOf(lp.t), yOf(lp.p), 4, 0, Math.PI * 2);
+    g.fillStyle = color; g.fill();
+    g.strokeStyle = css('--panel'); g.lineWidth = 2; g.stroke();
+  }
+  function drawWave() {
+    const w0 = state.wave;
+    $('wavePanel').classList.toggle('on', !!w0);
+    if (!w0) return;
+    const c = $('wave'), dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const padL = 56, padR = 56, padT = 10, padB = 22;
+    const pw = w - padL - padR, ph = h - padT - padB, n = w0.v.length;
+    // symmetric scale per trace, rounded up to a tidy step (only for placing pixels)
+    const nice = x => { const e = Math.pow(10, Math.floor(Math.log10(Math.max(x, 1)))); for (const k of [1, 2, 2.5, 5, 10]) if (k * e >= x) return k * e; return 10 * e; };
+    const vMax = nice(Math.max(...w0.v.map(Math.abs))), iMax = nice(Math.max(...w0.i.map(Math.abs)));
+    const xOf = k => padL + (n === 1 ? 0 : k / (n - 1) * pw);
+    const yOf = (v, m) => padT + ph / 2 - v / m * (ph / 2);
+    g.font = '11px system-ui, sans-serif';
+    g.strokeStyle = css('--line'); g.lineWidth = 1;
+    g.fillStyle = css('--muted');
+    for (const f of [-1, -0.5, 0, 0.5, 1]) {
+      const y = padT + ph / 2 - f * ph / 2;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(padL + pw, y); g.stroke();
+      g.textAlign = 'right'; g.fillText(String(f * vMax), padL - 6, y + 4);
+      g.textAlign = 'left';  g.fillText(String(f * iMax), padL + pw + 6, y + 4);
+    }
+    g.textAlign = 'center';
+    g.fillText('sample (one period, ' + n + ' points)', padL + pw / 2, h - 4);
+    const trace = (arr, m, color) => {
+      g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+      arr.forEach((v, k) => k ? g.lineTo(xOf(k), yOf(v, m)) : g.moveTo(xOf(k), yOf(v, m)));
+      g.stroke();
+    };
+    trace(w0.v, vMax, css('--plot'));
+    trace(w0.i, iMax, css('--plot2'));
+  }
+  window.addEventListener('resize', () => { draw(); drawWave(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { draw(); drawWave(); });
+
+  // ---------- Bluetooth ----------
+  async function connect() {
+    stopDemo();
+    try {
+      setStatus('Choose the board in the browser pop-up…', 'warn');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [NUS_SERVICE] }],
+      });
+      state.device = device;
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+      setStatus('Connecting to ' + (device.name || 'device') + '…', 'warn');
+      const server  = await device.gatt.connect();
+      const service = await server.getPrimaryService(NUS_SERVICE);
+      const tx = await service.getCharacteristic(NUS_TX);
+      state.rxChar = await service.getCharacteristic(NUS_RX);
+      const decoder = new TextDecoder();
+      tx.addEventListener('characteristicvaluechanged', e =>
+        feedText(decoder.decode(e.target.value, { stream: true })));
+      await tx.startNotifications();
+      try {                                 // programmer: only in the newer bridge firmware
+        state.ispChar = await service.getCharacteristic(ISP_CHAR);
+        state.ispChar.addEventListener('characteristicvaluechanged', e => {
+          const r = new Uint8Array(e.target.value.buffer.slice(0));
+          ispIo.notify(r);
+        });
+        await state.ispChar.startNotifications();
+      } catch (_) {
+        state.ispChar = null;
+      }
+      state.replayT = null; state.teamT0 = null;
+      timingReset();
+      setStatus('Connected to ' + (device.name || 'device'), 'ok');
+      updateFlashUi();
+      ui.connect.textContent = 'Disconnect';
+      ui.send.disabled = false;
+      ui.resetMM.disabled = false;
+    } catch (err) {
+      setStatus(err.name === 'NotFoundError' ? 'No device chosen' : 'Error: ' + err.message, 'bad');
+    }
+  }
+  function onDisconnected() {
+    setStatus('Disconnected', 'bad');
+    ui.connect.textContent = 'Connect';
+    ui.send.disabled = true;
+    ui.resetMM.disabled = true;
+    state.rxChar = null;
+    state.ispChar = null;
+    ispIo.cancel(fatal('Bluetooth disconnected'));
+    updateFlashUi();
+    setDoom(false);
+  }
+  ui.connect.addEventListener('click', () => {
+    if (state.device && state.device.gatt.connected) state.device.gatt.disconnect();
+    else connect();
+  });
+
+  // Bluetooth writes must not overlap, so every send goes through one queue.
+  // Chrome allows only one GATT operation at a time, so EVERY write (text and
+  // programmer) goes through this one queue.
+  let gattChain = Promise.resolve();
+  function gatt(op) {
+    const p = gattChain.then(op);
+    gattChain = p.catch(() => {});
+    return p;
+  }
+  let sendChain = Promise.resolve(), queued = 0;
+  function sendText(text, quiet) {
+    if (!text || !state.rxChar) return Promise.resolve(false);
+    queued++;
+    const job = sendChain.then(async () => {
+      const bytes = new TextEncoder().encode(text + '\n');
+      try {
+        for (let i = 0; i < bytes.length; i += 20) {        // 20-byte BLE packets
+          const c = state.rxChar;
+          await gatt(() => c.writeValue(bytes.slice(i, i + 20)));
+        }
+        if (!quiet) log('→ ' + text);
+        return true;
+      } catch (err) { log('send failed: ' + err.message); return false; }
+      finally { queued--; }
+    });
+    sendChain = job;
+    return job;
+  }
+
+  // ---------- Flash ATmega (programmer on the ESP32, protocol in AvrFlash) ----------
+  const isp = { prog: null, name: '', busy: false };
+  const fatal = AvrFlash.fatal;
+  const ispIo = AvrFlash.makeIo(bytes => gatt(() => {
+    const c = state.ispChar;
+    if (!c) throw fatal('not connected');
+    return c.writeValueWithResponse ? c.writeValueWithResponse(bytes) : c.writeValue(bytes);
+  }));
+  const ispCall = bytes => ispIo.call(bytes);
+
+  function flashMsg(text, kind) {
+    $('flashMsg').textContent = text;
+    $('flashMsg').className = 'note' + (kind ? ' ' + kind : '');
+  }
+  function updateFlashUi() {
+    const ok = !!(state.ispChar && isp.prog && !isp.busy);
+    $('flashBtn').disabled = !ok;
+    $('backupBtn').disabled = !(state.ispChar && !isp.busy);
+    $('hexBtn').disabled = isp.busy;
+    if (isp.busy) return;
+    if (state.rxChar && !state.ispChar) flashMsg('This ESP32 runs the older bridge firmware without the programmer: upload the new esp32_ble_bridge first.', 'bad');
+    else if (!state.rxChar) flashMsg(isp.prog ? 'Connect to the board to flash.' : 'Connect to the board and choose a .hex file.');
+    else if (!isp.prog) flashMsg('Choose the .hex file to write, or press Back up chip to save what is on the ATmega now.');
+    else flashMsg('Ready: press Flash. The ATmega stops while it is programmed (about 10–30 s).');
+  }
+
+  $('hexBtn').addEventListener('click', () => $('hexIn').click());
+  $('hexIn').addEventListener('change', async () => {
+    const f = $('hexIn').files[0];
+    $('hexIn').value = '';
+    if (!f) return;
+    try {
+      isp.prog = AvrFlash.parseHex(await f.text());
+      isp.name = f.name;
+      $('hexInfo').textContent = `${f.name}: ${isp.prog.dataBytes.toLocaleString()} bytes, ${isp.prog.pages.length} pages`;
+      $('flashBar').style.width = '0'; $('flashBar').className = '';
+    } catch (err) {
+      isp.prog = null;
+      $('hexInfo').textContent = f.name + ': ' + err.message;
+    }
+    updateFlashUi();
+  });
+
+  function saveFile(name, text) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  $('backupBtn').addEventListener('click', async () => {
+    if (!state.ispChar || isp.busy) return;
+    isp.busy = true;
+    updateFlashUi();
+    ui.send.disabled = ui.resetMM.disabled = true;
+    const bar = $('flashBar');
+    bar.className = '';
+    log('Reading the ATmega for a backup…');
+    try {
+      const r = await AvrFlash.readFlash({ call: ispCall }, (frac, text) => {
+        bar.style.width = (frac * 100).toFixed(1) + '%';
+        flashMsg(text);
+      });
+      bar.style.width = '100%'; bar.className = 'ok';
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
+      const name = `backup_${r.chip}_${stamp}.hex`;
+      if (r.used === 0) {
+        flashMsg(`The ${r.chip} is blank (erased): nothing to back up.`, 'ok');
+      } else {
+        saveFile(name, AvrFlash.toHex(r.image));
+        let msg = `Saved ${name}: ${r.used.toLocaleString()} bytes of program from the ${r.chip} (${(r.ms / 1000).toFixed(1)} s). The ATmega has restarted, unchanged.`;
+        if (isp.prog) {
+          const d = AvrFlash.firstDifference(r.image, isp.prog.image);
+          msg += d < 0 ? ` It is identical to ${isp.name}.`
+                       : ` It is different from ${isp.name} (first difference at 0x${d.toString(16).padStart(4, '0')}).`;
+        }
+        flashMsg(msg, 'ok');
+      }
+      log('Backup read OK: ' + r.chip + ', ' + r.used + ' bytes');
+    } catch (err) {
+      bar.className = 'bad';
+      flashMsg('Backup failed: ' + err.message + '. Nothing was written; the ATmega has been released.', 'bad');
+      log('Backup failed: ' + err.message);
+    } finally {
+      isp.busy = false;
+      if (state.rxChar) ui.send.disabled = ui.resetMM.disabled = false;
+      updateFlashUi();
+    }
+  });
+
+  $('flashBtn').addEventListener('click', async () => {
+    if (!isp.prog || !state.ispChar) return;
+    if (!confirm(`Flash ${isp.name}?\n\nThis ERASES the program that is on the ATmega now. ` +
+                 `If you might need it again, press Cancel and use "Back up chip" first.`)) return;
+    isp.busy = true;
+    updateFlashUi();
+    ui.send.disabled = ui.resetMM.disabled = true;
+    const bar = $('flashBar');
+    bar.className = '';
+    log('Flashing ' + isp.name + '…');
+    try {
+      const info = await AvrFlash.flash(isp.prog, { call: ispCall }, (frac, text) => {
+        bar.style.width = (frac * 100).toFixed(1) + '%';
+        flashMsg(text);
+      });
+      bar.style.width = '100%'; bar.className = 'ok';
+      const s = (info.ms / 1000).toFixed(1);
+      let msg = `Done: ${isp.prog.dataBytes.toLocaleString()} bytes written and verified on the ${info.chip} in ${s} s. It is running the new program.`;
+      if (!info.ckdiv8) msg += ' Note: the CKDIV8 fuse is off, so the chip runs at 16 MHz, not the 2 MHz the firmware expects.';
+      flashMsg(msg, 'ok');
+      log('Flash OK: ' + info.chip + ', ' + s + ' s' + (info.chunked ? ' (small packets)' : ''));
+    } catch (err) {
+      bar.className = 'bad';
+      flashMsg('Flash failed: ' + err.message + '. The ATmega has been released; the old program may be partly erased, so flash again once it is fixed.', 'bad');
+      log('Flash failed: ' + err.message);
+    } finally {
+      isp.busy = false;
+      if (state.rxChar) ui.send.disabled = ui.resetMM.disabled = false;
+      updateFlashUi();
+    }
+  });
+  updateFlashUi();
+
+  // ---------- DOOM mode controls ----------
+  state.doom = false;
+  function setDoom(on) {
+    state.doom = on;
+    $('doomPanel').classList.toggle('on', on);
+    if (on) {
+      $('doomKills').textContent = '0'; $('doomHp').textContent = '100';
+      $('doomPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+  function sendKey(k) {
+    if (!state.doom) return;
+    if (sim.on) { sim.key(k); return; }
+    if (queued > 2) return;                    // drop keys rather than build up lag
+    sendText(k, true);
+  }
+
+  // ---------- DOOM simulator: doom_core.c compiled to WebAssembly ----------
+  // Same code the ATmega runs (tools/build_doom_wasm.sh). The page only supplies
+  // the OLED: each frame arrives as 128 columns of 32 pixels, like over I2C.
+  const DOOM_WASM = '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SgUgBfkE1ASxBJAEcQRUBDgEHgQEBOwD1gPAA6sDlwOEA3IDYANQA0ADMAMhAxMDBQP4AusC3wLTAscCvAKxAqcCnQKTAooCgQJ4Am8CZwJfAlcCTwJIAkACOQIzAiwCJQIfAhkCEwINAgcCAgL8AfcB8gHtAegB4wHfAdoB1QHRAc0ByQHFAcEBvQG5AbUBsQGuAaoBpwGjAaABnQGaAZcBlAGRAY4BiwGIAYUBggGAAX0BewF4AXYBcwFxAW8BbAFqAWgBZgFkAWEBXwFdAVsBWgFYAVYBVAFSAVABTwFNAUsBSgFIAUYBRQFDAUIBQAE/AT0BPAE6ATkBOAE2ATUBNAEzATEBMAEvAS4BLQEsASoBKQEoAScBJgElASQBIwEiASEBIAEfAR8BHgEdARwBGwEaARoBGQEYARcBFwEWARUBFAEUARMBEgESAREBEAEQAQ8BDwEOAQ4BDQENAQwBDAELAQsBCgEKAQkBCQEIAQgBCAEHAQcBBgEGAQYBBQEFAQUBBAEEAQQBBAEDAQMBAwEDAQIBAgECAQIBAgEBAQEBAQEBAQEBAQEBAQABAAEAAQABAAEAAQABAAEAAQABAAEAQdIYCwL//wD0AQRuYW1lAAoJZG9vbS53YXNtAbkBDwAQb2xlZF9mcmFtZV9iZWdpbgELb2xlZF9jb2x1bW4CDm9sZWRfZnJhbWVfZW5kAwpkb29tX3Jlc2V0BAhuZXdfZ2FtZQUIZG9vbV9rZXkGBGNhc3QHB3RvX3ZpZXcIC2Rvb21fdXBkYXRlCQtkb29tX3JlbmRlcgoLdGV4dF9zY3JlZW4LEGRvb21fdGFrZV9ldmVudHMMCmRvb21fa2lsbHMNC2Rvb21faGVhbHRoDgZzdHJjcHkHEgEAD19fc3RhY2tfcG9pbnRlcgkRAgAHLnJvZGF0YQEFLmRhdGEAOAlwcm9kdWNlcnMBDHByb2Nlc3NlZC1ieQEMVWJ1bnR1IGNsYW5nETE4LjEuMyAoMXVidW50dTEpACwPdGFyZ2V0X2ZlYXR1cmVzAisPbXV0YWJsZS1nbG9iYWxzKwhzaWduLWV4dA==';
+  const sim = { on: false, exp: null, cols: new Uint32Array(128), n: 0, last: 0, raf: 0, img: null };
+  const oledCanvas = $('oled'), octx = oledCanvas.getContext('2d');
+  sim.img = octx.createImageData(128, 32);
+  function paintOled() {
+    const d = sim.img.data;
+    for (let x = 0; x < 128; x++) {
+      const c = sim.cols[x];
+      for (let y = 0; y < 32; y++) {
+        const i = (y * 128 + x) * 4, on = (c >>> y) & 1;
+        d[i] = on ? 214 : 0; d[i + 1] = on ? 236 : 0; d[i + 2] = on ? 255 : 0; d[i + 3] = 255;
+      }
+    }
+    octx.putImageData(sim.img, 0, 0);
+  }
+  async function simLoad() {
+    if (sim.exp) return;
+    const bin = Uint8Array.from(atob(DOOM_WASM), ch => ch.charCodeAt(0));
+    const env = {
+      oled_frame_begin() { sim.n = 0; },
+      oled_column(v) { if (sim.n < 128) sim.cols[sim.n++] = v >>> 0; },
+      oled_frame_end() { paintOled(); },
+    };
+    sim.exp = (await WebAssembly.instantiate(bin, { env })).instance.exports;
+  }
+  sim.key = k => sim.exp.doom_key(k.charCodeAt(0));
+  function simFrame(now) {
+    if (!sim.on) return;
+    const dt = Math.min(200, Math.round(now - sim.last));
+    if (dt >= 25) {                                        // ~40 frames/s, like the turbo ATmega
+      sim.last = now;
+      sim.exp.doom_update(dt);
+      sim.exp.doom_render();
+      const ev = sim.exp.doom_take_events();
+      $('doomKills').textContent = sim.exp.doom_kills();
+      $('doomHp').textContent = (ev & 2) || sim.exp.doom_health() <= 0 ? '0 (press FIRE)' : sim.exp.doom_health();
+    }
+    sim.raf = requestAnimationFrame(simFrame);
+  }
+  async function simStart() {
+    try { await simLoad(); } catch (err) { log('DOOM simulator failed to load: ' + err.message); return; }
+    stopDemo();
+    sim.on = true;
+    sim.exp.doom_reset((Math.random() * 65535) | 1);
+    $('doomPanel').classList.add('sim');
+    setDoom(true);
+    sim.last = performance.now();
+    sim.raf = requestAnimationFrame(simFrame);
+    $('doomSimBtn').textContent = 'Stop DOOM';
+  }
+  function simStop() {
+    sim.on = false;
+    cancelAnimationFrame(sim.raf);
+    $('doomPanel').classList.remove('sim');
+    setDoom(false);
+    $('doomSimBtn').textContent = 'Try DOOM';
+  }
+  $('doomSimBtn').addEventListener('click', () => sim.on ? simStop() : simStart());
+  const KEYMAP = { w: 'w', a: 'a', s: 's', d: 'd', q: 'q', e: 'e', f: 'f', ' ': 'f',
+                   arrowup: 'w', arrowdown: 's', arrowleft: 'a', arrowright: 'd' };
+  window.addEventListener('keydown', e => {
+    if (!state.doom || e.target === ui.sendText) return;
+    const k = KEYMAP[e.key.toLowerCase()];
+    if (k) { e.preventDefault(); sendKey(k); }
+  });
+  document.querySelectorAll('#doomPanel [data-key]').forEach(btn => {
+    let timer = null;
+    const stop = () => { clearInterval(timer); timer = null; };
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      sendKey(btn.dataset.key);
+      if (btn.dataset.key !== 'f') timer = setInterval(() => sendKey(btn.dataset.key), 120);   // hold to keep moving
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, stop));
+  });
+  $('doomExit').addEventListener('click', () => sim.on ? simStop() : sendText('EXIT'));
+  async function sendLine() {
+    if (await sendText(ui.sendText.value)) ui.sendText.value = '';
+  }
+  ui.send.addEventListener('click', sendLine);
+  ui.resetMM.addEventListener('click', () => sendText('RESETMM'));
+  ui.sendText.addEventListener('keydown', e => { if (e.key === 'Enter') sendLine(); });
+
+  // ---------- replay: test data fed through the same parser as real BLE ----------
+  // Lines are pre-formatted exactly as the ATmega's ble_report.c sends them, and are
+  // cut into 20-byte "packets" like the ESP32 bridge does, so line reassembly is tested too.
+  const speedSel = $('speedSel'), fileIn = $('fileIn');
+  function stopDemo() {
+    if (state.demoTimer) { clearTimeout(state.demoTimer); state.demoTimer = null; }
+    ui.demo.textContent = 'Demo';
+  }
+  function replay(text, label) {
+    stopDemo();
+    state.points = [];
+    state.axis = null;
+    state.mm = null;
+    state.teamT0 = null; state.replayT = 0; state.wave = null; state.block = null; drawWave();
+    ui.vMin.textContent = ui.vMax.textContent = '–';
+    ui.axisInfo.textContent = 'axis: waiting for ATmega';
+    const lines = text.split(/\r?\n/).filter(l => l && !l.startsWith('#'));
+    let i = 0;
+    setStatus('Replaying ' + label + ' (test data, not from the board)', 'warn');
+    ui.demo.textContent = 'Stop';
+    const step = () => {
+      // send everything up to and including the next reading, then wait one "second"
+      let out = '';
+      while (i < lines.length) {
+        out += lines[i] + '\n';
+        const l = lines[i++];
+        if (l.startsWith('D,') || l.startsWith('Vrms ')) { if (l.startsWith('Vrms ')) state.replayT = (state.replayT || 0) + 1; break; }
+      }
+      for (let k = 0; k < out.length; k += 20) feedText(out.slice(k, k + 20));
+      if (i < lines.length) state.demoTimer = setTimeout(step, +speedSel.value);
+      else { stopDemo(); state.replayT = null; setStatus('Replay of ' + label + ' finished'); }
+    };
+    step();
+  }
+  ui.demo.addEventListener('click', () => {
+    if (state.demoTimer) { stopDemo(); setStatus('Replay stopped'); return; }
+    replay(document.getElementById('testData').textContent, 'built-in test data');
+  });
+  $('fileBtn').addEventListener('click', () => fileIn.click());
+  fileIn.addEventListener('change', async () => {
+    const f = fileIn.files[0];
+    if (f) replay(await f.text(), f.name);
+    fileIn.value = '';
+  });
+
+  ui.clear.addEventListener('click', () => {
+    state.points = []; state.rawLines = []; state.logLines = []; state.mm = null;
+    state.wave = null; state.block = null; state.teamT0 = null; drawWave();
+    ui.log.textContent = '';
+    ['vP', 'vMax', 'vMin', 'vV', 'vI', 'vPF', 'vE'].forEach(k => ui[k].textContent = '–');
+    draw();
+  });
+
+  ui.csv.addEventListener('click', () => {
+    const blob = new Blob([state.rawLines.join('\n') + '\n'], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'power_log.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  draw();
+})();
+</script>
+</body>
+</html>
